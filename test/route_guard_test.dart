@@ -63,4 +63,19 @@ void main() {
       AppRoutes.orders,
     );
   });
+
+  test('seller applications are an authenticated customer operation', () {
+    expect(
+      AppRoutes.resolveForSession(
+        AppRoutes.sellerApplication,
+        loggedIn: true,
+        accountType: 'Customer',
+      ),
+      AppRoutes.sellerApplication,
+    );
+    expect(
+      AppRoutes.resolveForSession(AppRoutes.sellerApplication, loggedIn: false),
+      AppRoutes.login,
+    );
+  });
 }

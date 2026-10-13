@@ -262,9 +262,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          isSeller
-              ? 'Application submitted. Confirm your email, then follow the review status.'
-              : 'Account created. Check your email to verify it.',
+          'Customer account created. Check your email to verify it. You can apply to sell after signing in.',
         ),
       ),
     );

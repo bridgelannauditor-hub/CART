@@ -13,6 +13,7 @@ class AppRoutes {
   static const String messages = "/messages";
   static const String orders = "/orders";
   static const String profile = "/profile";
+  static const String sellerApplication = "/seller-application";
 
   static const String sellerDashboard = "/seller-dashboard";
   static const String addProduct = "/add-product";
@@ -38,6 +39,7 @@ class AppRoutes {
     messages,
     orders,
     profile,
+    sellerApplication,
   };
 
   static const Set<String> sellerRoutes = {

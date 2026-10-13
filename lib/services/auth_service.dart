@@ -24,11 +24,8 @@ class AuthService {
           'first_name': user.firstName.trim(),
           'last_name': user.lastName.trim(),
           'phone': user.phone?.trim(),
-          'account_type': user.accountType,
-          'shop_name': user.shopName?.trim(),
+          'account_type': 'Customer',
           'avatar_url': user.profileImage,
-          if (user.sellerVerification != null)
-            'seller_verification': user.sellerVerification!.toApplicationMap(),
         },
       );
 

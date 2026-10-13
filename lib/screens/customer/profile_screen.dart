@@ -17,6 +17,7 @@ import 'notifications_screen.dart';
 import 'password_security_screen.dart';
 import 'personal_information_screen.dart';
 import 'settings_screen.dart';
+import 'seller_application_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -332,6 +333,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () => _openScreen(
                           context,
                           const PasswordSecurityScreen(),
+                        ),
+                      ),
+                      _ProfileTile(
+                        icon: Icons.storefront_outlined,
+                        label: "Apply to Sell",
+                        onTap: () => _openScreen(
+                          context,
+                          const SellerApplicationScreen(),
                         ),
                       ),
                     ],

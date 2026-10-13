@@ -50,7 +50,7 @@ class AccountTypeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Choose your starting experience. You can apply to sell later if you begin as a customer.',
+                    'Every account starts as a customer. After signing in, you can apply to open a shop.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       height: 1.45,
@@ -71,10 +71,10 @@ class AccountTypeScreen extends StatelessWidget {
                     icon: Icons.storefront_outlined,
                     title: 'To sell',
                     description:
-                        'Open a shop as a student, individual, or business and start listing your crafts.',
-                    buttonLabel: 'START SELLING',
+                        'Create your customer account first, then submit a separate seller application from your profile.',
+                    buttonLabel: 'CREATE ACCOUNT TO APPLY',
                     emphasized: true,
-                    onTap: () => _continue(context, 'Seller'),
+                    onTap: () => _continue(context, 'Customer'),
                   ),
                   const SizedBox(height: 20),
                   TextButton(

@@ -23,6 +23,7 @@ import 'screens/customer/cart_screen.dart';
 import 'screens/customer/checkout_screen.dart';
 import 'screens/customer/orders_screen.dart';
 import 'screens/customer/profile_screen.dart';
+import 'screens/customer/seller_application_screen.dart';
 
 import 'screens/seller/seller_dashboard_screen.dart';
 import 'screens/seller/add_product_screen.dart';
@@ -110,9 +111,7 @@ class CArtApp extends StatelessWidget {
       AppRoutes.login => const LoginScreen(),
       AppRoutes.register => const AccountTypeScreen(),
       AppRoutes.registerDetails => RegisterScreen(
-        initialAccountType: settings.arguments == 'Seller'
-            ? 'Seller'
-            : 'Customer',
+        initialAccountType: 'Customer',
       ),
       AppRoutes.forgotPassword => const ForgotPasswordScreen(),
       AppRoutes.home => const HomeScreen(),
@@ -123,6 +122,7 @@ class CArtApp extends StatelessWidget {
       AppRoutes.messages => const MessagesScreen(),
       AppRoutes.orders => const OrdersScreen(),
       AppRoutes.profile => const ProfileScreen(),
+      AppRoutes.sellerApplication => const SellerApplicationScreen(),
       AppRoutes.sellerDashboard => const SellerDashboardScreen(),
       AppRoutes.addProduct => const AddProductScreen(),
       AppRoutes.sellerOrders => const SellerOrdersScreen(),
