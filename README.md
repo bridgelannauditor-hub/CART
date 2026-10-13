@@ -5,6 +5,86 @@ manage carts and favorites, claim vouchers, place multi-seller orders, chat,
 and follow order progress. Seller-facing code supports product management,
 promotions, fulfillment, analytics, chat, and LIVE shopping.
 
+## What this application does
+
+C+ART connects people who create handmade products with customers who want to
+discover and buy them. A single account starts as a Buyer. The account may
+later submit a Seller application, complete identity and shop review, and—only
+after trusted approval—receive Seller capabilities.
+
+The main product journeys are:
+
+### Buyer journey
+
+1. Register or sign in as a Buyer.
+2. Browse products, categories, shops, and public Seller information.
+3. Save favorites, maintain a cart, follow shops, and receive eligible
+   vouchers.
+4. Select a delivery address and place an order containing products from one or
+   more Sellers.
+5. Track each Seller's part of the order, receive notifications, chat, and
+   review delivered products.
+6. Apply to become a Seller without creating a second account.
+
+### Seller journey
+
+1. Submit personal or business application information as an existing Buyer.
+2. Complete identity verification and create a draft shop.
+3. Wait for identity, shop, and administrative approval.
+4. After activation, manage products, stock, shop promotions, and the Seller's
+   portion of marketplace orders.
+5. Use analytics, customer chat, and eventually secure LIVE shopping.
+
+The repository contains parts of both the legacy marketplace and its new
+security architecture. Some screens and data paths already work, while other
+features are deliberately gated until their backend authorization and provider
+integrations are complete. Contributors should preserve working behavior and
+extend the existing services, repositories, RPCs, and migrations instead of
+building parallel replacements.
+
+## Application architecture at a glance
+
+```text
+Flutter screens and widgets
+        |
+        v
+Services and repositories
+        |
+        +--> Supabase Auth / PostgreSQL / RPC / RLS
+        +--> Firebase Auth / Firestore / Cloud Functions (legacy paths)
+        +--> SQLite local cache and offline state
+        +--> Cloudinary media uploads
+        +--> Agora video SDK (development only)
+```
+
+- **Screens and widgets** render Buyer, application, Seller, chat, checkout, and
+  LIVE experiences.
+- **Repositories and services** translate UI actions into local storage,
+  Supabase, Firebase, Cloudinary, or Agora operations.
+- **PostgreSQL RPCs** own calculations and sensitive state changes such as
+  checkout, campaign creation, application submission, and fulfillment.
+- **RLS policies and grants** are the real database authorization boundary.
+  Hiding a button or route in Flutter is not a security control.
+- **SQLite** supports offline and cached behavior, but customer data that must
+  follow an account across devices ultimately needs a trusted cloud source.
+
+## Domain terminology
+
+- **Buyer / Customer:** the default account created through public signup.
+- **Applicant:** a Buyer with a Seller application; not yet an active Seller.
+- **Legacy Seller:** a historical profile marked `Seller` by the older account
+  model. This alone must not grant new active-Seller authorization.
+- **Active Seller:** a reviewed Seller authorized by a trusted backend record in
+  `seller_accounts`.
+- **Application status:** submission and review state for becoming a Seller.
+- **Identity status:** result returned by an approved identity-verification
+  provider.
+- **Shop approval:** review state for the proposed shop.
+- **Fulfillment grant:** temporary permission for one Seller to finish one
+  reviewed pre-existing order; it grants no listing, promotion, or LIVE access.
+- **Platform voucher:** promotion controlled and funded at marketplace level.
+- **Shop voucher:** promotion belonging to one approved Seller.
+
 > **Security status:** Phase 0 containment is under review. The five Phase 0
 > migrations are committed as source but have not been deployed or validated
 > against a local, staging, or production Supabase database. Do not deploy them
@@ -57,6 +137,26 @@ scripts/security/       Source-level Phase 0 regression checks
 scripts/supabase/       Trusted migration utilities and safe env example
 docs/                   Architecture, audit, and feature documentation
 ```
+
+## Contributor workflow
+
+1. Read this README and the relevant file under `docs/` before changing a
+   feature.
+2. Check `git status` and preserve unrelated or user-owned work.
+3. Search for an existing screen, service, repository, RPC, policy, or table
+   before adding another one.
+4. Never rewrite a historical migration that may already have been applied.
+   Add a new ordered migration for every database change.
+5. Keep trusted decisions in backend code and database authorization. Do not
+   rely on route guards, hidden controls, local state, or client metadata.
+6. Add tests for both the allowed action and the corresponding denial.
+7. Run formatting, analysis, and relevant tests before opening a pull request.
+8. Document migrations, environment requirements, manual configuration, and
+   behavior that could not be validated locally.
+
+For security-sensitive work, include test identities representing a Buyer,
+inactive Seller, active Seller, unrelated authenticated user, and service role.
+Never run destructive tests against production data.
 
 ## Local Flutter setup
 
