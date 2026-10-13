@@ -1,0 +1,15 @@
+{
+  "name": "craft-of-love-supabase-migration",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dry-run": "node --env-file=.env migrate-firestore.mjs",
+    "migrate": "node --env-file=.env migrate-firestore.mjs --apply",
+    "auth-dry-run": "node --env-file=.env provision-auth-users.mjs",
+    "auth-migrate": "node --env-file=.env provision-auth-users.mjs --apply"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "firebase-admin": "^14.0.0"
+  }
+}

@@ -1,0 +1,288 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(profilePath());
+    }
+
+    function profile() {
+      return get(profilePath()).data;
+    }
+
+    function myId() {
+      return profile().id;
+    }
+
+    function isSeller() {
+      return hasProfile() && profile().accountType == 'Seller';
+    }
+
+    function immutable(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function validOrderStatus(status) {
+      return status in [
+        'Pending',
+        'Preparing',
+        'Shipped',
+        'Out for Delivery',
+        'Delivered',
+        'Cancelled'
+      ];
+    }
+
+    match /users/{uid} {
+      function validNotificationPreferences() {
+        return !request.resource.data.keys().hasAny(['notificationPreferences'])
+          || (request.resource.data.notificationPreferences is map
+            && request.resource.data.notificationPreferences.keys().hasOnly([
+              'pushEnabled',
+              'emailEnabled',
+              'orderUpdates',
+              'promoOffers'
+            ])
+            && request.resource.data.notificationPreferences.pushEnabled is bool
+            && request.resource.data.notificationPreferences.emailEnabled is bool
+            && request.resource.data.notificationPreferences.orderUpdates is bool
+            && request.resource.data.notificationPreferences.promoOffers is bool);
+      }
+
+      allow read: if signedIn();
+
+      // Numeric IDs and immutable identity fields are allocated by the
+      // trusted profile function.
+      allow create: if false;
+
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && immutable([
+          'id',
+          'firebaseUid',
+          'accountType',
+          'createdAt',
+          'sellerVerification'
+        ])
+        && request.resource.data.email == request.auth.token.email
+        && validNotificationPreferences()
+        && !request.resource.data.keys().hasAny(['password']);
+
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /counters/{counterId} {
+      allow read, write: if false;
+    }
+
+    // Contains private identity and payout-review data. Only trusted server
+    // code and administrators may access it; client SDK access is denied.
+    match /sellerVerificationApplications/{uid} {
+      allow read, write: if false;
+    }
+
+    match /products/{productId} {
+      allow read: if signedIn();
+      // Product IDs, seller ownership and initial aggregate fields are
+      // assigned by the trusted product function.
+      allow create: if false;
+      allow update: if isSeller()
+        && resource.data.sellerId == myId()
+        && request.resource.data.sellerId == resource.data.sellerId
+        && request.resource.data.id == resource.data.id
+        && immutable(['rating', 'ratingTotal', 'reviewCount', 'totalSold']);
+      allow delete: if isSeller() && resource.data.sellerId == myId();
+    }
+
+    match /orders/{orderId} {
+      function isCustomer() {
+        return hasProfile() && resource.data.customerId == myId();
+      }
+
+      function isOrderSeller() {
+        return isSeller() && myId() in resource.data.sellerIds;
+      }
+
+      // Orders, totals, inventory and voucher redemptions are written only
+      // by the trusted checkout functions (Admin SDK bypasses these rules).
+      allow create: if false;
+
+      allow read: if isCustomer() || isOrderSeller();
+
+      allow update: if false;
+
+      allow delete: if false;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if signedIn();
+      // Eligibility, identity and product aggregates are enforced by the
+      // trusted review function (Admin SDK bypasses these rules).
+      allow create, update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if hasProfile() && resource.data.userId == myId();
+      // Order and status notifications are written by trusted functions.
+      // Sellers may still notify their followers when starting a LIVE.
+      allow create: if isSeller()
+        && request.resource.data.createdById == myId()
+        && request.resource.data.userId is int
+        && request.resource.data.type == 'live'
+        && request.resource.data.isRead == false;
+      allow update: if hasProfile()
+        && resource.data.userId == myId()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+        && request.resource.data.isRead == true;
+      allow delete: if false;
+    }
+
+    match /conversations/{conversationId} {
+      function participant(data) {
+        return hasProfile()
+          && data.participantIds is list
+          && myId() in data.participantIds;
+      }
+
+      allow read: if participant(resource.data);
+      allow create: if participant(request.resource.data)
+        && request.resource.data.participantIds.size() == 2;
+      allow update: if participant(resource.data)
+        && participant(request.resource.data)
+        && request.resource.data.participantIds == resource.data.participantIds;
+      allow delete: if participant(resource.data);
+
+      match /messages/{messageId} {
+        function parent() {
+          return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
+        }
+
+        function parentAfter() {
+          return getAfter(/databases/$(database)/documents/conversations/$(conversationId)).data;
+        }
+
+        allow read: if hasProfile() && myId() in parent().participantIds;
+        allow create: if hasProfile()
+          && myId() in parentAfter().participantIds
+          && request.resource.data.senderId == myId()
+          && request.resource.data.receiverId in parentAfter().participantIds;
+        allow update: if hasProfile()
+          && myId() in parent().participantIds
+          && (
+            (resource.data.senderId == myId()
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['messageText', 'editedAt']))
+            ||
+            (resource.data.receiverId == myId()
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['isRead'])
+              && request.resource.data.isRead == true)
+          );
+        allow delete: if hasProfile() && resource.data.senderId == myId();
+      }
+    }
+
+    match /followerCampaigns/{sellerId} {
+      allow read: if signedIn();
+      allow create: if isSeller()
+        && request.resource.data.sellerId == myId()
+        && request.resource.data.claimed == 0;
+      allow update: if isSeller()
+        && resource.data.sellerId == myId()
+        && request.resource.data.sellerId == resource.data.sellerId
+        && immutable(['sellerId', 'campaignId', 'claimed', 'createdAt']);
+      allow delete: if false;
+    }
+
+    match /customerVouchers/{voucherId} {
+      function ownsVoucher(data) {
+        return hasProfile() && data.customerId == myId();
+      }
+
+      function issuedVoucher(data) {
+        return isSeller() && data.sellerId == myId();
+      }
+
+      allow read: if ownsVoucher(resource.data) || issuedVoucher(resource.data);
+      // Claims, redemption and restoration are trusted backend operations.
+      allow create, update: if false;
+      allow delete: if false;
+    }
+
+    match /shopFollows/{followId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /shopFollowHistory/{historyId} {
+      allow read: if hasProfile()
+        && (resource.data.customerId == myId()
+          || (isSeller() && resource.data.sellerId == myId()));
+      allow create, update: if false;
+      allow delete: if false;
+    }
+
+    match /shopVisits/{visitId} {
+      allow read: if signedIn();
+      allow create, update: if hasProfile()
+        && request.resource.data.visitorId == myId();
+      allow delete: if false;
+    }
+
+    match /liveSessions/{sessionId} {
+      function ownsSession(data) {
+        return isSeller() && data.sellerId == myId();
+      }
+
+      allow read: if signedIn();
+      allow create: if ownsSession(request.resource.data);
+      allow update: if ownsSession(resource.data)
+        || (signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['reactionCounts']));
+      allow delete: if ownsSession(resource.data);
+
+      match /messages/{messageId} {
+        function live() {
+          return get(/databases/$(database)/documents/liveSessions/$(sessionId)).data;
+        }
+
+        allow read: if signedIn();
+        allow create: if hasProfile()
+          && request.resource.data.senderId == myId()
+          && request.resource.data.broadcastId == live().broadcastId
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300;
+        allow update: if isSeller()
+          && live().sellerId == myId()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hidden']);
+        allow delete: if false;
+      }
+
+      match /blockedUsers/{viewerId} {
+        function live() {
+          return get(/databases/$(database)/documents/liveSessions/$(sessionId)).data;
+        }
+
+        allow read: if hasProfile()
+          && (live().sellerId == myId() || resource.data.userId == myId());
+        allow create, update: if isSeller()
+          && live().sellerId == myId();
+        allow delete: if isSeller() && live().sellerId == myId();
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
