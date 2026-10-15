@@ -5,7 +5,10 @@ import '../../repositories/seller_application_repository.dart';
 import '../../utils/validators.dart';
 
 class SellerApplicationScreen extends StatefulWidget {
-  const SellerApplicationScreen({super.key});
+  /// Terms version the applicant accepts; supplied by the server.
+  final String termsVersion;
+
+  const SellerApplicationScreen({super.key, required this.termsVersion});
 
   @override
   State<SellerApplicationScreen> createState() =>
@@ -29,6 +32,7 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
   String _identityDocumentType = 'national_id';
   String _payoutMethod = 'gcash';
   bool _submitting = false;
+  bool _termsAccepted = false;
 
   @override
   void dispose() {
@@ -62,9 +66,16 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_termsAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Accept the Seller terms to continue.')),
+      );
+      return;
+    }
     setState(() => _submitting = true);
     try {
       final status = await SellerApplicationRepository().submit({
+        'acceptedTermsVersion': widget.termsVersion,
         'sellerType': _sellerType,
         'birthDate': _birthDate.text,
         'address': _address.text.trim(),
@@ -103,7 +114,7 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
           ),
         ),
       );
-      Navigator.pop(context);
+      Navigator.pop(context, true);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -237,8 +248,20 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
             ],
             const SizedBox(height: 20),
             const Text(
-              'Identity images, liveness, face matching, and final approval require the secure verification service and are not completed by this form.',
+              'Next, you will verify your identity with your camera: the front and back of your ID, then a live selfie. Your ID images go directly to our verification partner, not to Cart.',
               style: TextStyle(color: AppColors.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              value: _termsAccepted,
+              onChanged: (value) =>
+                  setState(() => _termsAccepted = value ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                'I accept the Cart Seller terms (version ${widget.termsVersion}), '
+                'including identity verification and shop review.',
+              ),
             ),
             const SizedBox(height: 20),
             FilledButton(

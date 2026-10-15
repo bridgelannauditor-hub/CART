@@ -6,7 +6,10 @@
     "dry-run": "node --env-file=.env migrate-firestore.mjs",
     "migrate": "node --env-file=.env migrate-firestore.mjs --apply",
     "auth-dry-run": "node --env-file=.env provision-auth-users.mjs",
-    "auth-migrate": "node --env-file=.env provision-auth-users.mjs --apply"
+    "auth-migrate": "node --env-file=.env provision-auth-users.mjs --apply",
+    "admin-dry-run": "node --env-file=.env provision-admin.mjs",
+    "admin-apply": "node --env-file=.env provision-admin.mjs --apply",
+    "simulate-verification": "node --env-file=.env simulate-verification-result.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",

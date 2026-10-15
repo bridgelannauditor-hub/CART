@@ -17,7 +17,9 @@ import 'notifications_screen.dart';
 import 'password_security_screen.dart';
 import 'personal_information_screen.dart';
 import 'settings_screen.dart';
-import 'seller_application_screen.dart';
+import 'seller_onboarding_screen.dart';
+import '../../repositories/admin_repository.dart';
+import '../admin/admin_seller_review_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -30,10 +32,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isResetting = false;
   int _voucherCount = 0;
   int _followedCount = 0;
+  bool _isAdmin = false;
   @override
   void initState() {
     super.initState();
     _loadCounts();
+    _loadAdminAccess();
+  }
+
+  // Only decides whether to show the admin tile; the server re-checks access.
+  Future<void> _loadAdminAccess() async {
+    final isAdmin = await AdminRepository().isAdmin();
+    if (mounted && isAdmin != _isAdmin) setState(() => _isAdmin = isAdmin);
   }
 
   Future<void> _loadCounts() async {
@@ -340,9 +350,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         label: "Apply to Sell",
                         onTap: () => _openScreen(
                           context,
-                          const SellerApplicationScreen(),
+                          const SellerOnboardingScreen(),
                         ),
                       ),
+                      if (_isAdmin)
+                        _ProfileTile(
+                          icon: Icons.admin_panel_settings_outlined,
+                          label: "Admin: Seller Applications",
+                          onTap: () => _openScreen(
+                            context,
+                            const AdminSellerReviewScreen(),
+                          ),
+                        ),
                     ],
                   ),
 

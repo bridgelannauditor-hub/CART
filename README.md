@@ -132,6 +132,8 @@ functions/              Firebase Cloud Functions
 firebase_rules_test/    Firestore authorization tests
 supabase/migrations/    Ordered PostgreSQL migrations
 supabase/phase0/        Read-only transition and security inventory queries
+supabase/functions/     Edge Functions (identity-verification session and webhook)
+supabase/rollout/       Staged enforcement scripts applied after rollout gates
 supabase/tests/         Disposable pgTAP authorization tests
 scripts/security/       Source-level Phase 0 regression checks
 scripts/supabase/       Trusted migration utilities and safe env example
@@ -199,6 +201,21 @@ and provide a caller-bound Seller application RPC.
 Historical migrations must not be rewritten. No existing Seller is activated
 or backfilled by these five migrations.
 
+## Seller onboarding and admin approval
+
+`202610150001_seller_onboarding_verification_flow.sql` adds the six-step
+Seller onboarding flow: confirmed account, application plus Seller terms,
+camera-based ID and liveness verification through a provider, a validated
+provider result, shop setup, and final admin approval. It also adds
+`verification_sessions`, `audit_logs`, securely provisioned `admin_users`,
+retry and appeal handling, and the Edge Functions under `supabase/functions/`.
+Approval is the only path that creates an active `seller_accounts` row.
+
+`supabase/rollout/enforce_active_seller.sql` switches product, campaign, LIVE,
+and Seller fulfillment checks from `account_type` to approved
+`seller_accounts`. It is staged, not a migration: apply it only after the
+rollout gates below. See [Seller onboarding](docs/SELLER_ONBOARDING.md).
+
 ## Disposable Supabase validation
 
 Database testing must use a disposable local Supabase project. Do not use a
@@ -217,6 +234,7 @@ Run:
 supabase start
 supabase db reset
 supabase test db supabase/tests/phase0_prevalidation.sql
+supabase test db supabase/tests/seller_onboarding_flow.sql
 supabase stop --no-backup
 ```
 
@@ -286,6 +304,7 @@ Do not run destructive validation against production data.
 ## Documentation
 
 - [Application audit](docs/APP_AUDIT_2026-10-07.md)
+- [Users, registration, and Seller onboarding](docs/SELLER_ONBOARDING.md)
 - [Phase 0 authorization foundation](docs/PHASE0_FOUNDATION.md)
 - [Legacy authorization quarantine](docs/PHASE0_LEGACY_AUTHORIZATION_INVENTORY.md)
 - [Supabase migration guide](docs/SUPABASE_MIGRATION.md)

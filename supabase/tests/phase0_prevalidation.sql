@@ -287,7 +287,7 @@ set local role authenticated;
 
 select extensions.lives_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Test address","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Test Applicant","status":"approved","listingLimit":999999,"schoolEmailVerified":true,"identityCaptureCompleted":true,"faceCaptureCompleted":true}'::jsonb
+    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Test address","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10","status":"approved","listingLimit":999999,"schoolEmailVerified":true,"identityCaptureCompleted":true,"faceCaptureCompleted":true}'::jsonb
   )$$,
   'a Buyer may submit a valid seller application through the RPC'
 );
@@ -343,7 +343,7 @@ where p.id = a.profile_id
 set local role authenticated;
 select extensions.lives_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Retry address","identityDocumentType":"passport","payoutMethod":"maya","payoutAccountName":"Test Applicant"}'::jsonb
+    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Retry address","identityDocumentType":"passport","payoutMethod":"maya","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
   )$$,
   'a rejected application may be retried'
 );
@@ -358,7 +358,7 @@ where p.id = a.profile_id
 set local role authenticated;
 select extensions.throws_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Third address","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Test Applicant"}'::jsonb
+    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Third address","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
   )$$,
   '23514',
   'an approved application cannot be resubmitted'

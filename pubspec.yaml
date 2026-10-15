@@ -55,6 +55,7 @@ dependencies:
 
   # Supabase backend
   supabase_flutter: ^2.18.2
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:
