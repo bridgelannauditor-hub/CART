@@ -27,6 +27,14 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (request.method !== "POST") return json(405, { error: "Method not allowed." });
 
+  // The app now captures ID photos itself and an administrator verifies them
+  // (submit_identity_documents / admin_resolve_identity_review). This provider
+  // session endpoint is retired: in "mock" mode it would mark an applicant's
+  // identity verified without any admin check, so it must not stay reachable.
+  if (Deno.env.get("ENABLE_PROVIDER_VERIFICATION") !== "true") {
+    return json(410, { error: "Identity verification now uses ID photo review." });
+  }
+
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) {
     return json(401, { error: "Sign in to continue." });
@@ -80,6 +88,29 @@ Deno.serve(async (request) => {
       },
     );
     if (attachError) throw attachError;
+
+    // Prototype mode is intentionally explicit and still stops short of
+    // activating Seller permissions. Final approval remains an admin-only
+    // operation enforced by Postgres. Never use this mode for a real launch.
+    if (provider.name === "mock") {
+      const { error: resultError } = await serviceClient.rpc(
+        "service_record_verification_result",
+        {
+          provider_session_ref: session.providerSessionId,
+          event_id: `prototype_${sessionId}`,
+          outcome: "verified",
+          reason: "prototype_only",
+          check_results: {},
+        },
+      );
+      if (resultError) throw resultError;
+
+      return json(200, {
+        sessionId,
+        demoCompleted: true,
+        expiresAt: session.expiresAt,
+      });
+    }
 
     return json(200, {
       sessionId,

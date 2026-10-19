@@ -107,7 +107,10 @@ select extensions.is(
    where n.nspname = 'private'
      and p.proname in ('handle_new_auth_user', 'sync_verified_auth_email',
                        'has_active_seller_authorization', 'can_fulfill_seller_order')
-     and (not p.prosecdef or coalesce(p.proconfig, '{}') <> array['search_path='])),
+     -- PostgreSQL 18 stores SET search_path = '' as search_path="".
+     and (not p.prosecdef
+          or coalesce(p.proconfig, '{}') not in (array['search_path='],
+                                                  array['search_path=""']))),
   0,
   'Phase 0 SECURITY DEFINER helpers use an empty search_path'
 );
@@ -287,7 +290,7 @@ set local role authenticated;
 
 select extensions.lives_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Test address","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10","status":"approved","listingLimit":999999,"schoolEmailVerified":true,"identityCaptureCompleted":true,"faceCaptureCompleted":true}'::jsonb
+    '{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"Test address","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10","status":"approved","listingLimit":999999,"schoolEmailVerified":true,"identityCaptureCompleted":true,"faceCaptureCompleted":true}'::jsonb
   )$$,
   'a Buyer may submit a valid seller application through the RPC'
 );
@@ -326,8 +329,8 @@ select extensions.is(
   'privileged application payload fields are ignored'
 );
 select extensions.ok(
-  (select listing_limit = 5 and not school_email_verified
-          and not identity_capture_completed and not face_capture_completed
+  (select a.listing_limit = 5 and not a.school_email_verified
+          and not a.identity_capture_completed and not a.face_capture_completed
    from public.seller_verification_applications a
    join public.profiles p on p.id = a.profile_id
    where p.auth_user_id = '10000000-0000-0000-0000-000000000001'),
@@ -343,7 +346,7 @@ where p.id = a.profile_id
 set local role authenticated;
 select extensions.lives_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Retry address","identityDocumentType":"passport","payoutMethod":"maya","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
+    '{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"Retry address","identityDocumentType":"passport","payoutMethod":"maya","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
   )$$,
   'a rejected application may be retried'
 );
@@ -358,7 +361,7 @@ where p.id = a.profile_id
 set local role authenticated;
 select extensions.throws_ok(
   $$select public.submit_seller_application(
-    '{"sellerType":"individual","birthDate":"1995-05-05","address":"Third address","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
+    '{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"Third address","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Test Applicant","acceptedTermsVersion":"2026-10"}'::jsonb
   )$$,
   '23514',
   'an approved application cannot be resubmitted'
@@ -396,8 +399,7 @@ select extensions.throws_ok(
 );
 reset role;
 
--- Deferred seller enforcement. These tests intentionally fail on the current
--- source because legacy operations still use private.is_seller().
+-- Active-Seller enforcement --------------------------------------------------
 
 select set_config(
   'request.jwt.claims',
@@ -426,6 +428,29 @@ select extensions.throws_ok(
     values (private.current_profile_id(), 'phase0-unauthorized-live', 'Must be denied', true)$$,
   '42501',
   'inactive Sellers cannot create LIVE sessions'
+);
+select extensions.throws_ok(
+  $$select public.update_my_shop_profile('Unauthorized Shop Rename', null, null)$$,
+  '42501',
+  'inactive Sellers cannot manage shop identity'
+);
+reset role;
+
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-0000-0000-000000000006","role":"authenticated"}',
+  true
+);
+set local role authenticated;
+select extensions.lives_ok(
+  $$select public.update_my_shop_profile('Approved Test Shop', null, null)$$,
+  'active Sellers can manage shop identity'
+);
+select extensions.lives_ok(
+  $$select public.create_product(
+    '{"categoryId":1,"categoryGroup":"Art & Visual","categoryName":"Painting","productName":"Approved seller listing","description":"Allowed","price":10,"stock":1,"image":"","tags":[],"pricingMode":"single","options":[]}'::jsonb
+  )$$,
+  'active Sellers can create products'
 );
 reset role;
 
@@ -456,6 +481,11 @@ select extensions.throws_ok(
   '42501',
   'a receiver cannot edit the sender message content'
 );
+select extensions.lives_ok(
+  $$update public.messages set is_read = true
+    where id = '30000000-0000-0000-0000-000000000001'$$,
+  'a receiver can mark a received message as read'
+);
 select extensions.throws_ok(
   $$update public.conversations
     set participant_ids = array[private.current_profile_id(),
@@ -477,6 +507,13 @@ select extensions.is(
   0,
   'an unrelated authenticated user cannot read another profile email'
 );
+select extensions.is(
+  (select count(*)::integer from public.marketplace_profiles
+   where id = (select id from public.profiles
+     where auth_user_id = '10000000-0000-0000-0000-000000000001')),
+  1,
+  'an authenticated user can read safe marketplace identity fields'
+);
 reset role;
 
 -- Exact-order helper fixtures ----------------------------------------------
@@ -493,6 +530,21 @@ insert into public.products
   (id, seller_id, category_id, product_name, description, price, stock, image)
 select 900003, id, 1, 'Other seller item', 'Fixture', 10, 10, ''
 from public.profiles where auth_user_id = '10000000-0000-0000-0000-000000000007';
+
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-0000-0000-000000000004","role":"authenticated"}',
+  true
+);
+set local role authenticated;
+select extensions.throws_ok(
+  $$select public.place_order(
+    '{"items":[{"product_id":900002,"quantity":1}],"voucher_ids":{},"payment_method":"Cash on Delivery","delivery_address":{"fullName":"Buyer Two","phone":"09170000000","line1":"Test","city":"Test","province":"Test"}}'::jsonb
+  )$$,
+  '42501',
+  'buyers cannot place a new order with an inactive Seller'
+);
+reset role;
 
 insert into public.orders
   (id, customer_id, seller_ids, product_ids, subtotal, total, payment_method, delivery_address, status)

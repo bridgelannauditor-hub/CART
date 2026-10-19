@@ -69,7 +69,7 @@ select set_config('request.jwt.claims',
   '{"sub":"20000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
 set local role authenticated;
 select extensions.throws_ok(
-  $$select public.submit_seller_application('{"sellerType":"individual","birthDate":"1995-05-05","address":"A","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"U","acceptedTermsVersion":"2026-10"}'::jsonb)$$,
+  $$select public.submit_seller_application('{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"12 Rizal Street, Makati City","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"U","acceptedTermsVersion":"2026-10"}'::jsonb)$$,
   '42501',
   'an unverified account cannot apply'
 );
@@ -82,12 +82,12 @@ select set_config('request.jwt.claims',
 set local role authenticated;
 
 select extensions.throws_ok(
-  $$select public.submit_seller_application('{"sellerType":"individual","birthDate":"1995-05-05","address":"A","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Ana"}'::jsonb)$$,
+  $$select public.submit_seller_application('{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"12 Rizal Street, Makati City","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Ana"}'::jsonb)$$,
   '22023',
   'applying without accepting the current terms is rejected'
 );
 select extensions.lives_ok(
-  $$select public.submit_seller_application('{"sellerType":"individual","birthDate":"1995-05-05","address":"A","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Ana","acceptedTermsVersion":"2026-10","identityStatus":"verified"}'::jsonb)$$,
+  $$select public.submit_seller_application('{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1995-05-05","address":"12 Rizal Street, Makati City","identityDocumentType":"national_id","payoutMethod":"gcash","payoutAccountName":"Ana","acceptedTermsVersion":"2026-10","identityStatus":"verified"}'::jsonb)$$,
   'a verified Buyer can apply after accepting the terms'
 );
 select extensions.is(
@@ -187,6 +187,45 @@ select extensions.is(
   2,
   'an applicant can read their own verification sessions'
 );
+select extensions.lives_ok(
+  $$select public.submit_seller_application(
+    '{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1996-06-06","address":"Updated identity address","identityDocumentType":"passport","payoutMethod":"gcash","payoutAccountName":"Ana","acceptedTermsVersion":"2026-10"}'::jsonb
+  )$$,
+  'an applicant may correct identity details before final approval'
+);
+select extensions.is(
+  (select identity_status from public.seller_verification_applications
+   where profile_id = private.current_profile_id()),
+  'not_started',
+  'changing identity facts invalidates the previous verification result'
+);
+select extensions.throws_ok(
+  $$select public.save_shop_draft('{"shopName":"Ana Crafts","shopDescription":"Hand-knitted scarves and bags","shopCategory":"Fiber and Textile Crafts","shopCity":"Quezon City","submit":true}'::jsonb)$$,
+  '42501',
+  'shop setup is blocked until the changed identity is verified again'
+);
+select extensions.lives_ok(
+  $$select public.begin_identity_verification('mock')$$,
+  'the applicant can verify the revised identity details'
+);
+reset role;
+
+set local role service_role;
+select public.service_attach_verification_session(
+  (select s.id from public.verification_sessions s join public.profiles p on p.id = s.profile_id
+   where p.auth_user_id = '20000000-0000-0000-0000-000000000001' and s.status = 'created'),
+  'prov-ana-revised', now() + interval '30 minutes');
+select extensions.is(
+  public.service_record_verification_result(
+    'prov-ana-revised', 'evt-revised', 'verified', null,
+    '{"document":true,"liveness":true,"face_match":true}'::jsonb
+  ) ->> 'status',
+  'verified',
+  'the provider result verifies the current application revision'
+);
+reset role;
+
+set local role authenticated;
 select extensions.throws_ok(
   $$select public.begin_identity_verification('mock')$$,
   '23514',
@@ -251,7 +290,7 @@ select extensions.throws_ok(
 select extensions.lives_ok(
   $$select public.admin_review_seller_application(
       (select id from public.profiles where auth_user_id = '20000000-0000-0000-0000-000000000001'),
-      1, 'approve')$$,
+      2, 'approve')$$,
   'an admin can approve a verified applicant with a submitted shop'
 );
 reset role;
@@ -299,7 +338,7 @@ reset role;
 select set_config('request.jwt.claims',
   '{"sub":"20000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
 set local role authenticated;
-select public.submit_seller_application('{"sellerType":"individual","birthDate":"1990-01-01","address":"B","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Ben","acceptedTermsVersion":"2026-10"}'::jsonb);
+select public.submit_seller_application('{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1990-01-01","address":"45 Mabini Avenue, Cebu City","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Ben","acceptedTermsVersion":"2026-10"}'::jsonb);
 select public.begin_identity_verification('mock');
 reset role;
 set local role service_role;
@@ -364,7 +403,7 @@ select extensions.is(
   'a failed identity review closes the application'
 );
 select extensions.throws_ok(
-  $$select public.submit_seller_application('{"sellerType":"individual","birthDate":"1990-01-01","address":"B","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Ben","acceptedTermsVersion":"2026-10"}'::jsonb)$$,
+  $$select public.submit_seller_application('{"sellerType":"individual","firstName":"Test","lastName":"Applicant","birthDate":"1990-01-01","address":"45 Mabini Avenue, Cebu City","identityDocumentType":"passport","payoutMethod":"bank","payoutAccountName":"Ben","acceptedTermsVersion":"2026-10"}'::jsonb)$$,
   '23514',
   'a failed identity check cannot be bypassed by resubmitting'
 );
