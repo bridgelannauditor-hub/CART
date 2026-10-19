@@ -85,8 +85,9 @@ Services and repositories
 - **Platform voucher:** promotion controlled and funded at marketplace level.
 - **Shop voucher:** promotion belonging to one approved Seller.
 
-> **Security status:** Phase 0 containment is under review. The five Phase 0
-> migrations are committed as source but have not been deployed or validated
+> **Security status:** Phase 0 containment is under review. The seven Phase 0
+> and onboarding/enforcement migrations are committed as source but have not
+> been deployed or validated
 > against a local, staging, or production Supabase database. Do not deploy them
 > to production, activate Sellers, or enable LIVE hosting until the validation
 > and rollout gates below have been completed.
@@ -119,9 +120,9 @@ Supabase equivalent is being introduced.
 - Application approval, identity verification, shop approval, and active Seller
   authorization are separate states.
 
-The current Phase 0 foundation deliberately does **not** replace every legacy
-`private.is_seller()` check. Broad Seller enforcement requires a separate,
-reviewed rollout after existing Sellers and outstanding orders are inventoried.
+The final enforcement migration replaces legacy Seller checks, protects private
+profiles and chat integrity, and invalidates stale identity evidence. It must be
+deployed only after existing Sellers and outstanding orders are inventoried.
 
 ## Repository structure
 
@@ -133,7 +134,7 @@ firebase_rules_test/    Firestore authorization tests
 supabase/migrations/    Ordered PostgreSQL migrations
 supabase/phase0/        Read-only transition and security inventory queries
 supabase/functions/     Edge Functions (identity-verification session and webhook)
-supabase/rollout/       Staged enforcement scripts applied after rollout gates
+supabase/rollout/       Preserved pre-migration enforcement draft
 supabase/tests/         Disposable pgTAP authorization tests
 scripts/security/       Source-level Phase 0 regression checks
 scripts/supabase/       Trusted migration utilities and safe env example
@@ -175,9 +176,13 @@ Never run destructive tests against production data.
      --dart-define=SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_KEY
    ```
 
-5. Configure Cloudinary with a restricted unsigned upload preset that enforces
+5. Add `io.supabase.flutter://login-callback/` to the Supabase Auth redirect
+   URL allow list and register the same deep link in each mobile platform
+   target. OAuth sign-in and password recovery both return through this URL;
+   the app routes recovery sessions to the new-password screen automatically.
+6. Configure Cloudinary with a restricted unsigned upload preset that enforces
    the same file types and size limits as the client.
-6. Run the application with `flutter run`.
+7. Run the application with `flutter run`.
 
 Never place a Supabase service-role key, identity-provider secret, Cloudinary
 API secret, or production Agora token in Flutter source or `--dart-define`.
@@ -193,13 +198,19 @@ The migrations must be reviewed and applied in this order:
 3. `202610130003_phase0_safe_profile_linking.sql`
 4. `202610130004_phase0_seller_order_helper_remediation.sql`
 5. `202610130005_phase0_seller_application_rpc.sql`
+6. `202610150001_seller_onboarding_verification_flow.sql`
+7. `202610150002_enforce_marketplace_authorization.sql`
+8. `202610150003_student_school_email_verification.sql`
 
 They add the Seller authorization foundation, enforce Buyer-only public signup,
 protect profile linking, bind order-helper calls to the authenticated Seller,
-and provide a caller-bound Seller application RPC.
+provide a caller-bound Seller application RPC, implement reviewed onboarding,
+and enforce the approved-Seller, profile-privacy, and chat-integrity boundaries.
+The final migration adds a revision-bound school-email challenge for student
+applicants.
 
 Historical migrations must not be rewritten. No existing Seller is activated
-or backfilled by these five migrations.
+or backfilled automatically by these migrations.
 
 ## Seller onboarding and admin approval
 
@@ -211,10 +222,41 @@ provider result, shop setup, and final admin approval. It also adds
 retry and appeal handling, and the Edge Functions under `supabase/functions/`.
 Approval is the only path that creates an active `seller_accounts` row.
 
-`supabase/rollout/enforce_active_seller.sql` switches product, campaign, LIVE,
-and Seller fulfillment checks from `account_type` to approved
-`seller_accounts`. It is staged, not a migration: apply it only after the
-rollout gates below. See [Seller onboarding](docs/SELLER_ONBOARDING.md).
+`202610150002_enforce_marketplace_authorization.sql` switches product,
+campaign, checkout, LIVE, and Seller fulfillment checks from `account_type` to
+approved `seller_accounts`. It also introduces a safe marketplace-profile view
+and database-enforced chat integrity. Apply it only after the rollout gates
+below. See [Seller onboarding](docs/SELLER_ONBOARDING.md).
+
+`202610150003_student_school_email_verification.sql` stores only HMAC digests
+of short-lived verification codes. Deploy `request-school-email-verification`
+and `verify-school-email-code`, then configure `RESEND_API_KEY`,
+`SCHOOL_EMAIL_FROM`, and a random 32-byte-or-longer
+`SCHOOL_EMAIL_HMAC_SECRET` as Edge Function secrets. The sender address must be
+verified with the configured email provider.
+
+## Marketing Centre flash sales
+
+Flash Sale is not part of Add or Edit Product. A Seller publishes a product
+first and promotes it later from Shop Management → Marketing Centre → Flash
+Sale. `202610170003_flash_sales.sql` adds `flash_sales`, a server-only
+`product_price_history`, and these server-enforced rules:
+
+- Eligibility: listed at least 7 days, at least 1 delivered sale, and no
+  regular price increase in the last 7 days.
+- Pricing: 1–90% off, replacing the regular discount. Every resulting price
+  must be lower than that price point's lowest price in the last 30 days.
+- Schedule: starts at least 1 hour ahead (within 30 days) and runs 1–72 hours;
+  one scheduled or live sale per product. Prices and the regular discount are
+  locked until it ends or is cancelled.
+- Checkout: `place_order` applies the flash price within the promo stock and
+  the 1–10 per-customer limit. A cart that was shown a flash price is blocked,
+  never charged more, when that sale has ended, sold out, or hit the limit.
+  Cancellations return units to the sale.
+
+The migration retires `products.is_flash_sale`: existing flags are cleared and
+clients can no longer write the column. It redefines `place_order`,
+`cancel_order_item`, and `update_seller_order` in full.
 
 ## Disposable Supabase validation
 
@@ -235,6 +277,7 @@ supabase start
 supabase db reset
 supabase test db supabase/tests/phase0_prevalidation.sql
 supabase test db supabase/tests/seller_onboarding_flow.sql
+supabase test db supabase/tests/flash_sales.sql
 supabase stop --no-backup
 ```
 
@@ -259,6 +302,8 @@ node --check scripts/security/check_phase0_signup_migration.mjs
 node scripts/security/check_phase0_signup_migration.mjs
 node --check scripts/security/check_phase0_remediation.mjs
 node scripts/security/check_phase0_remediation.mjs
+node --check scripts/security/check_marketplace_authorization.mjs
+node scripts/security/check_marketplace_authorization.mjs
 ```
 
 Static scripts verify expected source patterns only. They do not prove that a
@@ -269,10 +314,8 @@ matches the repository.
 
 The current source still requires separately reviewed containment work for:
 
-- active-Seller checks in product, campaign, fulfillment, and LIVE operations;
-- message-content edits, read-state updates, deletion, and conversation
-  membership changes;
-- public-safe profile views and private profile RLS;
+- deployment and disposable-database validation of the new Seller, profile,
+  checkout, identity-revision, and chat enforcement controls;
 - COD-only checkout enforcement until other payment integrations exist;
 - idempotent checkout requests;
 - session-specific, server-issued Agora tokens and safe LIVE session selection;

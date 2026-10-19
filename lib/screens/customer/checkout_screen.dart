@@ -129,6 +129,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  Future<void> _refreshPrices() async {
+    try {
+      final refreshed = await _productRepository.getProductsByIds(
+        cartItems.map((item) => item.productId).toSet().toList(),
+      );
+      if (mounted) setState(() => products = refreshed);
+    } catch (_) {}
+  }
+
   AddressModel? get _selectedAddress {
     for (final address in _addresses) {
       if (address.id == _selectedAddressId) return address;
@@ -218,9 +227,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   double _itemPrice(CartItemModel item, ProductModel product) {
-    return product.optionById(item.optionId)?.price ??
-        item.unitPrice ??
-        product.price;
+    final basePrice = product.optionById(item.optionId)?.price ?? product.price;
+    return product.discountedPriceFor(basePrice);
   }
 
   double get _total {
@@ -446,10 +454,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         voucherIds: _selectedVouchers,
         paymentMethod: _paymentMethod,
         deliveryAddress: deliveryAddress,
+        flashSaleIds: {
+          for (final product in products)
+            if (product.id != null && product.liveFlashSale != null)
+              product.id!: product.liveFlashSale!.id,
+        },
       );
     } catch (error) {
       if (!mounted) return;
       setState(() => isPlacingOrder = false);
+      // A flash sale may have ended or sold out; show current prices.
+      _refreshPrices();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -581,9 +596,8 @@ class _CheckoutForm extends StatelessWidget {
   });
 
   double _itemPrice(CartItemModel item, ProductModel product) {
-    return product.optionById(item.optionId)?.price ??
-        item.unitPrice ??
-        product.price;
+    final basePrice = product.optionById(item.optionId)?.price ?? product.price;
+    return product.discountedPriceFor(basePrice);
   }
 
   Widget _receiptRow(String label, String amount, {bool emphasize = false}) {

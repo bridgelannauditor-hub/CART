@@ -52,7 +52,7 @@ class CategoriesScreen extends StatelessWidget {
           },
         ),
       ),
-      bottomNavigationBar: const BottomNavbar(currentIndex: 1),
+      bottomNavigationBar: const BottomNavbar(currentIndex: 0),
     );
   }
 }

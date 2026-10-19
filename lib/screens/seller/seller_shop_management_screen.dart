@@ -1,4 +1,4 @@
-import 'follower_vouchers_screen.dart';
+import 'marketing_centre_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../../constants/app_colors.dart';
@@ -35,6 +35,8 @@ class _SellerShopManagementScreenState
   late Future<List<SellerOrderItemModel>> _future;
   int _year = DateTime.now().year;
   int _month = DateTime.now().month;
+  // false: revenue from delivered orders only; true: also orders in progress.
+  bool _includeInProgress = false;
 
   @override
   void initState() {
@@ -77,12 +79,12 @@ class _SellerShopManagementScreenState
           child: Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              label: const Text('Followers & Vouchers'),
-              icon: const Icon(Icons.local_offer_outlined),
+              label: const Text('Marketing Centre'),
+              icon: const Icon(Icons.campaign_outlined),
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const FollowerVouchersScreen(),
+                  builder: (_) => const MarketingCentreScreen(),
                 ),
               ),
             ),
@@ -111,8 +113,11 @@ class _SellerShopManagementScreenState
               orders: snapshot.data ?? const [],
               year: _year,
               month: _month,
+              includeInProgress: _includeInProgress,
               onYearChanged: _changeYear,
               onMonthChanged: (value) => setState(() => _month = value),
+              onBasisChanged: (value) =>
+                  setState(() => _includeInProgress = value),
             );
           },
         ),
@@ -125,69 +130,116 @@ class _AnalyticsBody extends StatelessWidget {
   final List<SellerOrderItemModel> orders;
   final int year;
   final int month;
+  final bool includeInProgress;
   final ValueChanged<int> onYearChanged;
   final ValueChanged<int> onMonthChanged;
+  final ValueChanged<bool> onBasisChanged;
 
   const _AnalyticsBody({
     required this.orders,
     required this.year,
     required this.month,
+    required this.includeInProgress,
     required this.onYearChanged,
     required this.onMonthChanged,
+    required this.onBasisChanged,
   });
+
+  static const _inProgressStatuses = {
+    'pending',
+    'preparing',
+    'shipped',
+    'out for delivery',
+  };
+
+  /// Whether an order line counts towards revenue on the chosen basis.
+  bool _counts(SellerOrderItemModel order) {
+    final status = order.status.toLowerCase();
+    return status == 'delivered' ||
+        (includeInProgress && _inProgressStatuses.contains(status));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final delivered = orders.where(
-      (order) => order.status.toLowerCase() == 'delivered',
-    );
     final monthlyRevenue = List<double>.filled(12, 0);
-    final monthlyOrders = List<double>.filled(12, 0);
+    final monthlyOrderIds = List.generate(12, (_) => <int>{});
     final days = DateTime(year, month + 1, 0).day;
     final dailyRevenue = List<double>.filled(days, 0);
     final productRevenue = <String, double>{};
+    final productUnits = <String, int>{};
+    // Orders in the chosen month by status (an order is counted once; all of
+    // a seller's items in one order share a status).
+    final statusOrderIds = <String, Set<int>>{};
+    var inProgressValue = 0.0;
 
-    for (final order in delivered) {
-      final date = DateTime.tryParse(order.orderDate);
-      if (date == null) continue;
-      if (date.year == year) {
-        monthlyRevenue[date.month - 1] += order.lineTotal;
-        monthlyOrders[date.month - 1] += 1;
-      }
-      if (date.year == year && date.month == month) {
-        dailyRevenue[date.day - 1] += order.lineTotal;
-        productRevenue[order.productName] =
-            (productRevenue[order.productName] ?? 0) + order.lineTotal;
-      }
-    }
-
-    final currentYear = DateTime.now().year;
-    final sortedYears = List<int>.generate(10, (index) => currentYear - index);
-    final monthRevenue = monthlyRevenue[month - 1];
-    final yearlyRevenue = monthlyRevenue.fold<double>(0, (a, b) => a + b);
+    final now = DateTime.now();
     final previousMonth = month == 1 ? 12 : month - 1;
     final previousYear = month == 1 ? year - 1 : year;
-    final now = DateTime.now();
     final isCurrentMonth = year == now.year && month == now.month;
     final previousMonthDays = DateTime(previousYear, previousMonth + 1, 0).day;
     final comparisonDay = now.day < previousMonthDays
         ? now.day
         : previousMonthDays;
     var previousRevenue = 0.0;
-    for (final order in delivered) {
-      final date = DateTime.tryParse(order.orderDate);
-      if (date != null &&
-          date.year == previousYear &&
+
+    for (final order in orders) {
+      // Bucket by the seller's local calendar, not UTC, so an order placed
+      // late on the last day of a month is not counted in the next one.
+      final date = DateTime.tryParse(order.orderDate)?.toLocal();
+      if (date == null) continue;
+      final inChosenMonth = date.year == year && date.month == month;
+      final status = order.status.toLowerCase();
+      if (inChosenMonth) {
+        (statusOrderIds[order.status] ??= <int>{}).add(order.orderId);
+        if (_inProgressStatuses.contains(status)) {
+          inProgressValue += order.lineTotal;
+        }
+      }
+      if (!_counts(order)) continue;
+      if (date.year == year) {
+        monthlyRevenue[date.month - 1] += order.lineTotal;
+        monthlyOrderIds[date.month - 1].add(order.orderId);
+      }
+      if (inChosenMonth) {
+        dailyRevenue[date.day - 1] += order.lineTotal;
+        productRevenue[order.productName] =
+            (productRevenue[order.productName] ?? 0) + order.lineTotal;
+        productUnits[order.productName] =
+            (productUnits[order.productName] ?? 0) + order.quantity;
+      }
+      if (date.year == previousYear &&
           date.month == previousMonth &&
           (!isCurrentMonth || date.day <= comparisonDay)) {
         previousRevenue += order.lineTotal;
       }
     }
+
+    final monthlyOrders = [for (final ids in monthlyOrderIds) ids.length];
+    final currentYear = now.year;
+    final sortedYears = List<int>.generate(10, (index) => currentYear - index);
+    final monthRevenue = monthlyRevenue[month - 1];
+    final yearlyRevenue = monthlyRevenue.fold<double>(0, (a, b) => a + b);
+    final monthOrderCount = monthlyOrders[month - 1];
+    final averageOrder = monthOrderCount == 0
+        ? 0.0
+        : monthRevenue / monthOrderCount;
     final change = previousRevenue == 0
         ? null
         : (monthRevenue - previousRevenue) / previousRevenue * 100;
     final products = productRevenue.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
+    final inProgressOrders = {
+      for (final status in _inProgressStatuses)
+        ...?statusOrderIds[_titleCase(status)],
+    }.length;
+    final cancelledOrders = statusOrderIds['Cancelled']?.length ?? 0;
+    var bestDay = 0;
+    for (var i = 0; i < days; i++) {
+      if (dailyRevenue[i] > dailyRevenue[bestDay]) bestDay = i;
+    }
+    final basisLabel = includeInProgress
+        ? 'delivered and in-progress orders'
+        : 'confirmed delivered orders';
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(
@@ -195,21 +247,31 @@ class _AnalyticsBody extends StatelessWidget {
       ),
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 36),
       children: [
+        const Text(
+          'Sales analytics',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Revenue from $basisLabel.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 14),
         Row(
           children: [
-            const Expanded(
-              child: Text(
-                'Sales analytics',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.textPrimary,
-                ),
+            Expanded(
+              child: _Selector(
+                value: month,
+                items: {for (var i = 0; i < 12; i++) i + 1: _months[i]},
+                onChanged: onMonthChanged,
               ),
             ),
             const SizedBox(width: 12),
-            SizedBox(
-              width: 100,
+            Expanded(
               child: _Selector(
                 value: year,
                 items: {for (final value in sortedYears) value: '$value'},
@@ -218,12 +280,20 @@ class _AnalyticsBody extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        const Text(
-          'Revenue from confirmed delivered orders.',
-          style: TextStyle(color: AppColors.textSecondary),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: false, label: Text('Delivered only')),
+              ButtonSegment(value: true, label: Text('Incl. in progress')),
+            ],
+            selected: {includeInProgress},
+            onSelectionChanged: (value) => onBasisChanged(value.first),
+          ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
@@ -243,7 +313,50 @@ class _AnalyticsBody extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _SummaryCard(
+                label: 'Orders in ${_months[month - 1]}',
+                value: '$monthOrderCount',
+                icon: Icons.receipt_long_outlined,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _SummaryCard(
+                label: 'Average order',
+                value: _peso(averageOrder),
+                icon: Icons.shopping_basket_outlined,
+              ),
+            ),
+          ],
+        ),
+        if (!includeInProgress && inProgressOrders > 0) ...[
+          const SizedBox(height: 12),
+          _NoteCard(
+            icon: Icons.local_shipping_outlined,
+            color: const Color(0xFFD97706),
+            text:
+                '$inProgressOrders order${inProgressOrders == 1 ? '' : 's'} '
+                'worth ${_peso(inProgressValue)} '
+                '${inProgressOrders == 1 ? 'is' : 'are'} still in progress. '
+                'They count as revenue once delivered.',
+          ),
+        ],
+        if (cancelledOrders > 0) ...[
+          const SizedBox(height: 12),
+          _NoteCard(
+            icon: Icons.cancel_outlined,
+            color: AppColors.error,
+            text:
+                '$cancelledOrders cancelled order'
+                '${cancelledOrders == 1 ? '' : 's'} in ${_months[month - 1]} '
+                '(not counted in revenue).',
+          ),
+        ],
+        const SizedBox(height: 12),
         _AnalysisCard(
           change: change,
           current: monthRevenue,
@@ -265,6 +378,14 @@ class _AnalyticsBody extends StatelessWidget {
                 SizedBox(
                   width: width,
                   child: _ChartCard(
+                    title: 'Orders by status',
+                    subtitle: '${_months[month - 1]} $year',
+                    child: _StatusBreakdown(statusOrderIds: statusOrderIds),
+                  ),
+                ),
+                SizedBox(
+                  width: width,
+                  child: _ChartCard(
                     title: 'Revenue by month',
                     subtitle: '$year overview',
                     child: _BarChart(
@@ -277,15 +398,10 @@ class _AnalyticsBody extends StatelessWidget {
                   width: width,
                   child: _ChartCard(
                     title: 'Daily revenue',
-                    subtitle: '${_months[month - 1]} $year',
-                    trailing: SizedBox(
-                      width: 90,
-                      child: _Selector(
-                        value: month,
-                        items: {for (var i = 0; i < 12; i++) i + 1: _months[i]},
-                        onChanged: onMonthChanged,
-                      ),
-                    ),
+                    subtitle: dailyRevenue[bestDay] > 0
+                        ? '${_months[month - 1]} $year • best day: '
+                              '${bestDay + 1} (${_peso(dailyRevenue[bestDay])})'
+                        : '${_months[month - 1]} $year',
                     child: _ScrollableBarChart(
                       labels: List.generate(days, (index) => '${index + 1}'),
                       values: dailyRevenue,
@@ -295,19 +411,28 @@ class _AnalyticsBody extends StatelessWidget {
                 SizedBox(
                   width: width,
                   child: _ChartCard(
-                    title: "Product revenue",
-                    subtitle: 'Top products in ${_months[month - 1]}',
-                    child: _ProductRevenue(entries: products.take(5).toList()),
+                    title: 'Top products',
+                    subtitle: 'By revenue in ${_months[month - 1]}',
+                    child: _ProductRevenue(
+                      entries: [
+                        for (final entry in products.take(5))
+                          (
+                            entry.key,
+                            entry.value,
+                            productUnits[entry.key] ?? 0,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 SizedBox(
                   width: width,
                   child: _ChartCard(
                     title: 'Orders by month',
-                    subtitle: 'Delivered order items in $year',
+                    subtitle: 'Orders counted in revenue, $year',
                     child: _BarChart(
                       labels: _months.map((month) => month[0]).toList(),
-                      values: monthlyOrders,
+                      values: [for (final n in monthlyOrders) n.toDouble()],
                       currency: false,
                     ),
                   ),
@@ -319,6 +444,148 @@ class _AnalyticsBody extends StatelessWidget {
       ],
     );
   }
+}
+
+String _titleCase(String status) => status
+    .split(' ')
+    .map(
+      (word) => word.isEmpty ? word : word[0].toUpperCase() + word.substring(1),
+    )
+    .join(' ');
+
+const _statusOrder = [
+  'Pending',
+  'Preparing',
+  'Shipped',
+  'Out for Delivery',
+  'Delivered',
+  'Cancelled',
+];
+
+Color _statusColor(String status) => switch (status) {
+  'Pending' => const Color(0xFFD97706),
+  'Preparing' => const Color(0xFF2563EB),
+  'Shipped' => const Color(0xFF7C3AED),
+  'Out for Delivery' => const Color(0xFF0891B2),
+  'Delivered' => AppColors.success,
+  _ => AppColors.error,
+};
+
+/// A stacked bar of how many orders are in each status, with a legend.
+class _StatusBreakdown extends StatelessWidget {
+  final Map<String, Set<int>> statusOrderIds;
+  const _StatusBreakdown({required this.statusOrderIds});
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = {
+      for (final status in _statusOrder)
+        status: statusOrderIds[status]?.length ?? 0,
+    };
+    final total = counts.values.fold<int>(0, (a, b) => a + b);
+    if (total == 0) {
+      return const SizedBox(
+        height: 90,
+        child: Center(
+          child: Text(
+            'No orders this month',
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 14,
+            child: Row(
+              children: [
+                for (final entry in counts.entries)
+                  if (entry.value > 0)
+                    Expanded(
+                      flex: entry.value,
+                      child: Container(color: _statusColor(entry.key)),
+                    ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        for (final entry in counts.entries)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _statusColor(entry.key),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(entry.key)),
+                Text(
+                  '${entry.value}',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                SizedBox(
+                  width: 46,
+                  child: Text(
+                    '${(entry.value / total * 100).round()}%',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _NoteCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String text;
+  const _NoteCard({
+    required this.icon,
+    required this.color,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _Selector extends StatelessWidget {
@@ -393,12 +660,10 @@ class _SummaryCard extends StatelessWidget {
 class _ChartCard extends StatelessWidget {
   final String title, subtitle;
   final Widget child;
-  final Widget? trailing;
   const _ChartCard({
     required this.title,
     required this.subtitle,
     required this.child,
-    this.trailing,
   });
   @override
   Widget build(BuildContext context) => Container(
@@ -432,7 +697,6 @@ class _ChartCard extends StatelessWidget {
                 ],
               ),
             ),
-            if (trailing != null) ...[const SizedBox(width: 12), trailing!],
           ],
         ),
         const SizedBox(height: 18),
@@ -597,7 +861,7 @@ class _ScrollableBarChart extends StatelessWidget {
 }
 
 class _ProductRevenue extends StatelessWidget {
-  final List<MapEntry<String, double>> entries;
+  final List<(String, double, int)> entries;
   const _ProductRevenue({required this.entries});
   @override
   Widget build(BuildContext context) {
@@ -606,60 +870,79 @@ class _ProductRevenue extends StatelessWidget {
         height: 150,
         child: Center(
           child: Text(
-            'No delivered product revenue',
+            'No product revenue yet',
             style: TextStyle(color: AppColors.textSecondary),
           ),
         ),
       );
     }
-    final max = entries.first.value;
-    return SizedBox(
-      height: 150,
-      child: Column(
-        children: [
-          for (final entry in entries)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 92,
-                    child: Text(
-                      entry.key,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: LinearProgressIndicator(
-                        value: max == 0 ? 0 : entry.value / max,
-                        minHeight: 8,
-                        backgroundColor: AppColors.lightGrey,
+    final max = entries.first.$2;
+    return Column(
+      children: [
+        for (final (index, entry) in entries.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '${index + 1}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
                         color: AppColors.primary,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 62,
-                    child: Text(
-                      _peso(entry.value),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        entry.$1,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                    Text(
+                      _peso(entry.$2),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: max == 0 ? 0 : entry.$2 / max,
+                          minHeight: 8,
+                          backgroundColor: AppColors.lightGrey,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '${entry.$3} sold',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
@@ -675,7 +958,8 @@ class _AnalysisCard extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final up = change != null && change! >= 0;
+    // Revenue that started from nothing is good news, not a decline.
+    final up = change == null ? current! > 0 : change! >= 0;
     final same = current == previous;
     final color = same
         ? AppColors.textSecondary

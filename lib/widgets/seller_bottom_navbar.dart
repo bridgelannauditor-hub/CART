@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../utils/routes.dart';
 import 'message_navigation_icon.dart';
+import 'seller_orders_nav_icon.dart';
 
 /// Bottom navigation for the seller side of the app.
 /// Order: Home, Messages, Live, Orders, Profile — Live sits in the
@@ -56,8 +57,8 @@ class SellerBottomNavbar extends StatelessWidget {
           label: "Live",
         ),
         NavigationDestination(
-          icon: Icon(Icons.receipt_long_outlined),
-          selectedIcon: Icon(Icons.receipt_long),
+          icon: SellerOrdersNavIcon(),
+          selectedIcon: SellerOrdersNavIcon(selected: true),
           label: "Orders",
         ),
         NavigationDestination(

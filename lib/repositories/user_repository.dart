@@ -8,7 +8,7 @@ class UserRepository {
 
   Future<UserModel?> getUserById(int id) async {
     final row = await _supabase
-        .from('profiles')
+        .from('marketplace_profiles')
         .select()
         .eq('id', id)
         .maybeSingle();
@@ -20,7 +20,7 @@ class UserRepository {
     if (uniqueIds.isEmpty) return [];
 
     final rows = await _supabase
-        .from('profiles')
+        .from('marketplace_profiles')
         .select()
         .inFilter('id', uniqueIds);
     return rows.map(UserModel.fromSupabaseMap).toList();
@@ -37,7 +37,13 @@ class UserRepository {
     if (profileImage != null) updates['profile_image'] = profileImage;
     if (updates.isEmpty) return;
 
-    await _supabase.from('profiles').update(updates).eq('id', sellerId);
+    await _supabase.rpc(
+      'update_my_shop_profile',
+      params: {
+        'new_cover_image': coverImage,
+        'new_profile_image': profileImage,
+      },
+    );
   }
 
   Future<void> updateShopName({
@@ -45,9 +51,9 @@ class UserRepository {
     required String shopName,
     String? firebaseUid,
   }) async {
-    await _supabase
-        .from('profiles')
-        .update({'shop_name': shopName})
-        .eq('id', sellerId);
+    await _supabase.rpc(
+      'update_my_shop_profile',
+      params: {'new_shop_name': shopName},
+    );
   }
 }

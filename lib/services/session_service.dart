@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'auth_service.dart';
 import '../models/user_model.dart';
+import 'push_service.dart';
 
 class SessionService {
   static int? userId;
@@ -31,6 +34,9 @@ class SessionService {
     SessionService.email = email;
     SessionService.accountType = accountType;
     SessionService.onboardingCompleted = onboardingCompleted;
+    // Every sign-in path ends here; tell this phone to receive the user's
+    // notifications (it asks for permission the first time).
+    unawaited(PushService.instance.registerForCurrentUser());
   }
 
   static void loginUser(UserModel user) {
@@ -62,6 +68,9 @@ class SessionService {
   }
 
   static Future<void> logout() async {
+    // While the session is still valid, stop this phone receiving the
+    // signed-out user's notifications.
+    await PushService.instance.unregister();
     await AuthService().logout();
     userId = null;
     firebaseUid = null;

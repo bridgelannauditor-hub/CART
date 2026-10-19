@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../constants/app_colors.dart';
 import '../../models/seller_onboarding_model.dart';
 import '../../repositories/seller_application_repository.dart';
+import '../../services/auth_service.dart';
+import '../../services/session_service.dart';
+import '../../utils/routes.dart';
+import 'identity_capture_screen.dart';
 import 'seller_application_screen.dart';
 import 'seller_shop_setup_screen.dart';
 
@@ -77,30 +80,154 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
     if (submitted == true) await _load();
   }
 
+  /// Opens the in-app camera flow for the ID and selfie photos. They are
+  /// queued for manual review by an administrator.
   Future<void> _startIdentityVerification() async {
+    final submitted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const IdentityCaptureScreen()),
+    );
+    if (submitted == true) {
+      _showMessage(
+        'Photos sent. An administrator will review them and you will be '
+        'notified.',
+      );
+    }
+    await _load();
+  }
+
+  Future<void> _requestSchoolEmailVerification() async {
     setState(() => _busy = true);
     try {
-      final session = await _repository.startIdentityVerification();
-      final opened = await launchUrl(
-        session.verificationUrl,
-        mode: LaunchMode.inAppBrowserView,
-      );
-      if (!opened) {
-        _showMessage('The verification page could not be opened.');
+      final challenge = await _repository.requestSchoolEmailVerification();
+      if (!mounted) return;
+      final verified = await _showSchoolEmailCodeDialog(challenge);
+      if (verified == true) {
+        _showMessage('School email verified.');
+        await _load();
       }
     } on FunctionException catch (error) {
       final details = error.details;
       _showMessage(
         details is Map && details['error'] is String
             ? details['error'] as String
-            : 'Identity verification could not start. Please try again.',
+            : 'The verification email could not be sent.',
       );
     } catch (_) {
-      _showMessage('Identity verification could not start. Please try again.');
+      _showMessage('The verification email could not be sent.');
     } finally {
       if (mounted) setState(() => _busy = false);
-      await _load();
     }
+  }
+
+  Future<bool?> _showSchoolEmailCodeDialog(
+    SchoolEmailChallengeStart challenge,
+  ) {
+    final controller = TextEditingController(text: challenge.prototypeCode);
+    var saving = false;
+    String? errorText;
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Verify school email'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (challenge.prototypeCode != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.secondary.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    'PROTOTYPE ONLY\nCode: ${challenge.prototypeCode}\n'
+                    'No email was sent. Final Seller access still requires '
+                    'administrator approval.',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ] else
+                Text(
+                  'Enter the six-digit code sent to ${challenge.maskedEmail}.',
+                ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                enabled: !saving,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: InputDecoration(
+                  labelText: 'Verification code',
+                  errorText: errorText,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final code = controller.text.trim();
+                      if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+                        setDialogState(
+                          () => errorText = 'Enter the six-digit code.',
+                        );
+                        return;
+                      }
+                      setDialogState(() {
+                        saving = true;
+                        errorText = null;
+                      });
+                      try {
+                        await _repository.verifySchoolEmailCode(
+                          challengeId: challenge.challengeId,
+                          code: code,
+                        );
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext, true);
+                        }
+                      } on FunctionException catch (error) {
+                        final details = error.details;
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          saving = false;
+                          errorText =
+                              details is Map && details['error'] is String
+                              ? details['error'] as String
+                              : 'The code could not be verified.';
+                        });
+                      } catch (_) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          saving = false;
+                          errorText = 'The code could not be verified.';
+                        });
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('VERIFY'),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(controller.dispose);
   }
 
   Future<void> _openShopSetup() async {
@@ -159,6 +286,30 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
     }
   }
 
+  Future<void> _openSellerDashboard() async {
+    setState(() => _busy = true);
+    try {
+      final profile = await AuthService().restoreSession();
+      if (profile == null || profile.accountType != 'Seller') {
+        _showMessage(
+          'Your approval is recorded, but your profile is still refreshing. Pull down and try again.',
+        );
+        return;
+      }
+      SessionService.loginUser(profile);
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.sellerDashboard,
+        (route) => false,
+      );
+    } catch (_) {
+      _showMessage('Your Seller dashboard could not be opened. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = _state;
@@ -188,6 +339,8 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
                 style: TextStyle(color: AppColors.textSecondary, height: 1.4),
               ),
               const SizedBox(height: 16),
+              _ApplicationStatusCard(state: state),
+              const SizedBox(height: 12),
               _currentStepCard(state),
               const SizedBox(height: 24),
               _StepList(step: state.step),
@@ -224,6 +377,20 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
             onPressed: _openApplicationForm,
           ),
         );
+      case SellerOnboardingStep.verifySchoolEmail:
+        return _Notice(
+          icon: Icons.alternate_email_rounded,
+          color: AppColors.primary,
+          title: 'Verify your school email',
+          body:
+              'We will send a six-digit code to ${app?.schoolEmail ?? 'your school address'}. '
+              'The code expires after 10 minutes.',
+          action: _ActionButton(
+            label: 'SEND VERIFICATION CODE',
+            busy: _busy,
+            onPressed: _requestSchoolEmailVerification,
+          ),
+        );
       case SellerOnboardingStep.verifyIdentity:
         final retry = app?.identityStatus == 'needs_retry';
         final pending = app?.identityStatus == 'pending';
@@ -239,13 +406,13 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
               ? '${describeSellerReasonCode(app?.identityReasonCode)}\n\n'
                     'Attempts left: ${state.identityAttemptsLeft}.'
               : pending
-              ? 'If you finished the camera steps, your result will appear '
-                    'here shortly. Pull down to refresh, or start again if '
-                    'the session was interrupted.'
-              : 'Use your camera to capture the front and back of your ID, '
-                    'then take a live selfie. This takes about 3 minutes.',
+              ? 'Your earlier verification session did not finish. Take your '
+                    'photos again to continue.'
+              : 'Take a photo of your ID and a selfie with your camera. An '
+                    'administrator reviews them before your Seller access is '
+                    'approved.',
           action: _ActionButton(
-            label: retry || pending ? 'START AGAIN' : 'START VERIFICATION',
+            label: retry || pending ? 'RETAKE PHOTOS' : 'TAKE ID PHOTOS',
             busy: _busy,
             onPressed: _startIdentityVerification,
           ),
@@ -256,8 +423,9 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
           color: AppColors.secondary,
           title: 'Under review',
           body:
-              'Your identity check needs a manual review. Seller tools stay '
-              'locked until it is complete. We will notify you.',
+              'Your ID photos were received and are waiting for an '
+              'administrator to review them. Seller tools stay locked until '
+              'it is complete. We will notify you.',
         );
       case SellerOnboardingStep.setUpShop:
         final changesRequested = app?.shopStatus == 'changes_requested';
@@ -323,11 +491,16 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
               : null,
         );
       case SellerOnboardingStep.approved:
-        return const _Notice(
+        return _Notice(
           icon: Icons.verified_outlined,
           color: AppColors.success,
           title: 'You are an approved Seller',
-          body: 'Sign out and back in to open your Seller dashboard.',
+          body: 'Your Seller tools are ready.',
+          action: _ActionButton(
+            label: 'OPEN SELLER DASHBOARD',
+            busy: _busy,
+            onPressed: _openSellerDashboard,
+          ),
         );
       case SellerOnboardingStep.suspended:
         return const _Notice(
@@ -338,6 +511,111 @@ class _SellerOnboardingScreenState extends State<SellerOnboardingScreen>
               'Your Buyer account still works. Contact Cart support for details.',
         );
     }
+  }
+}
+
+class _ApplicationStatusCard extends StatelessWidget {
+  final SellerOnboardingState state;
+
+  const _ApplicationStatusCard({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = state.applicationStatus;
+    final (icon, color) = switch (status) {
+      SellerApplicationStatus.notApplied => (
+        Icons.assignment_outlined,
+        AppColors.textSecondary,
+      ),
+      SellerApplicationStatus.pendingVerification => (
+        Icons.pending_actions_outlined,
+        AppColors.secondary,
+      ),
+      SellerApplicationStatus.verificationInProgress => (
+        Icons.manage_search_outlined,
+        AppColors.secondary,
+      ),
+      SellerApplicationStatus.verificationFailed => (
+        Icons.report_gmailerrorred_outlined,
+        AppColors.error,
+      ),
+      SellerApplicationStatus.shopSetupRequired => (
+        Icons.storefront_outlined,
+        AppColors.primary,
+      ),
+      SellerApplicationStatus.pendingAdminApproval => (
+        Icons.admin_panel_settings_outlined,
+        AppColors.secondary,
+      ),
+      SellerApplicationStatus.approved => (
+        Icons.verified_outlined,
+        AppColors.success,
+      ),
+      SellerApplicationStatus.rejected => (
+        Icons.cancel_outlined,
+        AppColors.error,
+      ),
+      SellerApplicationStatus.requiresResubmission => (
+        Icons.refresh_outlined,
+        AppColors.secondary,
+      ),
+      SellerApplicationStatus.suspended => (
+        Icons.block_outlined,
+        AppColors.error,
+      ),
+    };
+
+    return Semantics(
+      container: true,
+      label: 'Seller application status ${status.label}',
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Application status',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    status.label,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    state.applicationStatusGuidance,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -438,6 +716,7 @@ class _StepList extends StatelessWidget {
   int get _currentIndex => switch (step) {
     SellerOnboardingStep.verifyAccount => 0,
     SellerOnboardingStep.apply => 1,
+    SellerOnboardingStep.verifySchoolEmail => 2,
     SellerOnboardingStep.verifyIdentity => 2,
     SellerOnboardingStep.identityUnderReview => 3,
     SellerOnboardingStep.setUpShop => 4,

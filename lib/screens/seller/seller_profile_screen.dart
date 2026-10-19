@@ -18,6 +18,7 @@ import '../../widgets/product_image.dart';
 import '../../widgets/seller_bottom_navbar.dart';
 import '../customer/about_screen.dart';
 import '../customer/help_support_screen.dart';
+import '../customer/follow_list_screen.dart';
 import '../customer/notifications_screen.dart';
 import '../customer/password_security_screen.dart';
 import '../customer/personal_information_screen.dart';
@@ -40,8 +41,10 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   bool _savingImage = false;
   bool _resetting = false;
   String? _error;
+  int _following = 0;
   int _followers = 0;
   int _visitors = 0;
+  int _unitsSold = 0;
   double _rating = 0;
   int _reviews = 0;
 
@@ -49,6 +52,19 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  void _openFollowList(FollowListMode mode) {
+    final id = SessionService.userId;
+    if (id == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FollowListScreen(mode: mode, userId: id),
+      ),
+    ).then((_) {
+      if (mounted) _load();
+    });
   }
 
   Future<void> _load() async {
@@ -67,16 +83,19 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
     try {
       final values = await Future.wait([
         _users.getUserById(id),
+        _shops.getFollowedShopCount(id),
         _shops.getFollowerCount(id),
         _shops.getVisitorCount(id),
         _shops.getProductMetrics(id),
       ]);
       if (!mounted) return;
-      final metrics = values[3] as SellerProductMetrics;
+      final metrics = values[4] as SellerProductMetrics;
       setState(() {
         _user = values[0] as UserModel?;
-        _followers = values[1] as int;
-        _visitors = values[2] as int;
+        _following = values[1] as int;
+        _followers = values[2] as int;
+        _visitors = values[3] as int;
+        _unitsSold = metrics.unitsSold;
         _rating = metrics.averageRating;
         _reviews = metrics.reviewCount;
         _loading = false;
@@ -134,6 +153,14 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   void _viewShop() {
     final id = SessionService.userId;
     if (id != null) _open(ShopScreen(sellerId: id));
+  }
+
+  void _switchToCustomerMode() {
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.home,
+      (route) => false,
+    );
   }
 
   Future<void> _pickImage({required bool cover}) async {
@@ -350,13 +377,19 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                       saving: _savingImage,
                       edit: _editAppearance,
                       view: _viewShop,
+                      unitsSold: _unitsSold,
+                      rating: _rating,
+                      reviews: _reviews,
                     ),
                     const SizedBox(height: 16),
                     _Stats(
+                      following: _following,
                       followers: _followers,
                       visitors: _visitors,
-                      rating: _rating,
-                      reviews: _reviews,
+                      onFollowing: () =>
+                          _openFollowList(FollowListMode.following),
+                      onFollowers: () =>
+                          _openFollowList(FollowListMode.followers),
                     ),
                     if (_user?.sellerVerification != null) ...[
                       const SizedBox(height: 16),
@@ -404,6 +437,12 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                     const SizedBox(height: 10),
                     _Group(
                       children: [
+                        _Tile(
+                          Icons.swap_horiz_rounded,
+                          'Switch to Customer mode',
+                          _switchToCustomerMode,
+                          subtitle: 'Browse, buy, and use your Buyer features',
+                        ),
                         _Tile(
                           Icons.person_outline_rounded,
                           'Personal information',
@@ -569,12 +608,18 @@ class _Hero extends StatelessWidget {
   final bool saving;
   final VoidCallback edit;
   final VoidCallback view;
+  final int unitsSold;
+  final double rating;
+  final int reviews;
   const _Hero({
     required this.shopName,
     required this.user,
     required this.saving,
     required this.edit,
     required this.view,
+    required this.unitsSold,
+    required this.rating,
+    required this.reviews,
   });
   @override
   Widget build(BuildContext context) {
@@ -654,12 +699,44 @@ class _Hero extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 3),
-                            const Text(
-                              'Seller',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white70,
-                              ),
+                            Row(
+                              children: [
+                                Text(
+                                  '$unitsSold sold',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 6),
+                                  child: Text(
+                                    '•',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Color(0xFFFFC857),
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 2),
+                                Flexible(
+                                  child: Text(
+                                    reviews == 0
+                                        ? 'No ratings'
+                                        : '${rating.toStringAsFixed(1)} ($reviews)',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -758,13 +835,14 @@ class _Avatar extends StatelessWidget {
 }
 
 class _Stats extends StatelessWidget {
-  final int followers, visitors, reviews;
-  final double rating;
+  final int following, followers, visitors;
+  final VoidCallback onFollowing, onFollowers;
   const _Stats({
+    required this.following,
     required this.followers,
     required this.visitors,
-    required this.rating,
-    required this.reviews,
+    required this.onFollowing,
+    required this.onFollowers,
   });
   @override
   Widget build(BuildContext context) => Container(
@@ -772,17 +850,11 @@ class _Stats extends StatelessWidget {
     decoration: _card(),
     child: Row(
       children: [
-        Expanded(child: _Stat('$followers', 'Followers')),
+        Expanded(child: _Stat('$following', 'Following', onTap: onFollowing)),
+        const _Divider(),
+        Expanded(child: _Stat('$followers', 'Followers', onTap: onFollowers)),
         const _Divider(),
         Expanded(child: _Stat('$visitors', 'Visitors')),
-        const _Divider(),
-        Expanded(
-          child: _Stat(
-            reviews == 0 ? 'New' : rating.toStringAsFixed(1),
-            reviews == 0 ? 'No ratings' : '$reviews reviews',
-            star: reviews > 0,
-          ),
-        ),
       ],
     ),
   );
@@ -790,29 +862,31 @@ class _Stats extends StatelessWidget {
 
 class _Stat extends StatelessWidget {
   final String value, label;
-  final bool star;
-  const _Stat(this.value, this.label, {this.star = false});
+  final VoidCallback? onTap;
+  const _Stat(this.value, this.label, {this.onTap});
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (star)
-            const Icon(Icons.star_rounded, color: Color(0xFFE3A008), size: 17),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-          ),
-        ],
-      ),
-      const SizedBox(height: 3),
-      Text(
-        label,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-      ),
-    ],
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Column(
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+        ),
+      ],
+    ),
   );
 }
 

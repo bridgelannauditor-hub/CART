@@ -36,8 +36,9 @@ class HelpSupportScreen extends StatelessWidget {
     ),
     (
       "How do I become a seller on ${AppStrings.appName}?",
-      "Log out of your customer account and register a new account, "
-          "choosing \"Seller\" as the account type during sign-up.",
+      "Stay signed in to your customer account, open Profile, and select "
+          "\"Become a Seller.\" You can keep shopping while identity "
+          "verification and administrator review are in progress.",
     ),
     (
       "Is my payment information safe?",

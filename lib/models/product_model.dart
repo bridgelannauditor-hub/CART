@@ -1,4 +1,5 @@
 import '../database/tables.dart';
+import 'flash_sale_model.dart';
 import 'product_media_model.dart';
 import 'making_process_model.dart';
 import 'product_option_model.dart';
@@ -24,7 +25,6 @@ class ProductModel {
   final String? craftType;
   final String? material;
   final String? occasion;
-  final bool isFlashSale;
   final int discountPercent;
   final bool freeShipping;
   final bool codAvailable;
@@ -37,6 +37,10 @@ class ProductModel {
   final List<String> tags;
   final String pricingMode;
   final List<ProductOptionModel> options;
+
+  // Attached by the repositories when the product has a live Marketing Centre
+  // flash sale; never saved with the product.
+  final FlashSaleModel? flashSale;
 
   ProductModel({
     this.id,
@@ -55,7 +59,6 @@ class ProductModel {
     this.craftType,
     this.material,
     this.occasion,
-    this.isFlashSale = false,
     this.discountPercent = 0,
     this.freeShipping = false,
     this.codAvailable = false,
@@ -64,9 +67,40 @@ class ProductModel {
     this.tags = const [],
     this.pricingMode = 'single',
     this.options = const [],
+    this.flashSale,
   });
 
   bool get hasImageOptions => pricingMode == 'per_image' && options.isNotEmpty;
+
+  /// The attached flash sale while it is live; it stops applying the moment
+  /// it ends or sells out.
+  FlashSaleModel? get liveFlashSale {
+    final sale = flashSale;
+    return sale != null && sale.isLiveAt(DateTime.now()) ? sale : null;
+  }
+
+  bool get hasDiscount =>
+      liveFlashSale != null || (discountPercent > 0 && discountPercent <= 100);
+
+  /// A live flash sale replaces the regular discount, matching checkout.
+  double discountedPriceFor(double originalPrice) {
+    final sale = liveFlashSale;
+    if (sale != null) return sale.priceFor(originalPrice);
+    return regularPriceFor(originalPrice);
+  }
+
+  /// The price with only the regular discount, ignoring any flash sale.
+  double regularPriceFor(double originalPrice) {
+    if (discountPercent <= 0 || discountPercent > 100) return originalPrice;
+    final discounted = originalPrice * (1 - discountPercent / 100);
+    return (discounted * 100).roundToDouble() / 100;
+  }
+
+  double get effectivePrice => discountedPriceFor(price);
+
+  /// The discount badge to show: the flash percent while a sale is live.
+  int get activeDiscountPercent =>
+      liveFlashSale?.discountPercent ?? discountPercent;
 
   ProductOptionModel? get defaultOption {
     if (!hasImageOptions) return null;
@@ -84,6 +118,36 @@ class ProductModel {
     return null;
   }
 
+  ProductModel withFlashSale(FlashSaleModel? sale) {
+    return ProductModel(
+      id: id,
+      sellerId: sellerId,
+      categoryId: categoryId,
+      categoryGroup: categoryGroup,
+      categoryName: categoryName,
+      productName: productName,
+      description: description,
+      price: price,
+      stock: stock,
+      image: image,
+      rating: rating,
+      reviewCount: reviewCount,
+      totalSold: totalSold,
+      craftType: craftType,
+      material: material,
+      occasion: occasion,
+      discountPercent: discountPercent,
+      freeShipping: freeShipping,
+      codAvailable: codAvailable,
+      makingProcess: makingProcess,
+      media: media,
+      tags: tags,
+      pricingMode: pricingMode,
+      options: options,
+      flashSale: sale,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       DBTables.id: id,
@@ -98,7 +162,6 @@ class ProductModel {
       DBTables.craftType: craftType,
       DBTables.material: material,
       DBTables.occasion: occasion,
-      DBTables.isFlashSale: isFlashSale ? 1 : 0,
       DBTables.discountPercent: discountPercent,
       DBTables.freeShipping: freeShipping ? 1 : 0,
       DBTables.codAvailable: codAvailable ? 1 : 0,
@@ -119,7 +182,6 @@ class ProductModel {
       craftType: map[DBTables.craftType],
       material: map[DBTables.material],
       occasion: map[DBTables.occasion],
-      isFlashSale: ((map[DBTables.isFlashSale] as num?) ?? 0) != 0,
       discountPercent: (map[DBTables.discountPercent] as num?)?.toInt() ?? 0,
       freeShipping: ((map[DBTables.freeShipping] as num?) ?? 0) != 0,
       codAvailable: ((map[DBTables.codAvailable] as num?) ?? 0) != 0,
@@ -148,7 +210,6 @@ class ProductModel {
       'craftType': craftType,
       'material': material,
       'occasion': occasion,
-      'isFlashSale': isFlashSale,
       'discountPercent': discountPercent,
       'freeShipping': freeShipping,
       'codAvailable': codAvailable,
@@ -178,7 +239,6 @@ class ProductModel {
       craftType: map['craftType'] as String?,
       material: map['material'] as String?,
       occasion: map['occasion'] as String?,
-      isFlashSale: (map['isFlashSale'] as bool?) ?? false,
       discountPercent: (map['discountPercent'] as num?)?.toInt() ?? 0,
       freeShipping: (map['freeShipping'] as bool?) ?? false,
       codAvailable: (map['codAvailable'] as bool?) ?? false,
@@ -220,7 +280,6 @@ class ProductModel {
       'craft_type': craftType,
       'material': material,
       'occasion': occasion,
-      'is_flash_sale': isFlashSale,
       'discount_percent': discountPercent,
       'free_shipping': freeShipping,
       'cod_available': codAvailable,
@@ -250,7 +309,6 @@ class ProductModel {
       craftType: map['craft_type'] as String?,
       material: map['material'] as String?,
       occasion: map['occasion'] as String?,
-      isFlashSale: map['is_flash_sale'] as bool? ?? false,
       discountPercent: (map['discount_percent'] as num?)?.toInt() ?? 0,
       freeShipping: map['free_shipping'] as bool? ?? false,
       codAvailable: map['cod_available'] as bool? ?? false,

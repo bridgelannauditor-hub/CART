@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 
 import '../../constants/app_colors.dart';
 import '../../repositories/seller_application_repository.dart';
+import '../../services/session_service.dart';
 import '../../utils/validators.dart';
 
 class SellerApplicationScreen extends StatefulWidget {
@@ -17,6 +19,8 @@ class SellerApplicationScreen extends StatefulWidget {
 
 class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _firstName = TextEditingController(text: SessionService.firstName);
+  final _lastName = TextEditingController(text: SessionService.lastName);
   final _birthDate = TextEditingController();
   final _address = TextEditingController();
   final _payoutName = TextEditingController();
@@ -30,13 +34,14 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
 
   String _sellerType = 'individual';
   String _identityDocumentType = 'national_id';
-  String _payoutMethod = 'gcash';
   bool _submitting = false;
   bool _termsAccepted = false;
 
   @override
   void dispose() {
     for (final controller in [
+      _firstName,
+      _lastName,
       _birthDate,
       _address,
       _payoutName,
@@ -77,10 +82,11 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
       final status = await SellerApplicationRepository().submit({
         'acceptedTermsVersion': widget.termsVersion,
         'sellerType': _sellerType,
+        'firstName': _firstName.text.trim(),
+        'lastName': _lastName.text.trim(),
         'birthDate': _birthDate.text,
         'address': _address.text.trim(),
         'identityDocumentType': _identityDocumentType,
-        'payoutMethod': _payoutMethod,
         'payoutAccountName': _payoutName.text.trim(),
         'schoolEmail': _sellerType == 'student'
             ? _schoolEmail.text.trim().toLowerCase()
@@ -115,15 +121,16 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
         ),
       );
       Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'The application could not be submitted. Your account was not upgraded. Please review the form and retry.',
-          ),
-        ),
-      );
+      // Server validation messages are written for applicants.
+      final reason = error is PostgrestException && error.message.isNotEmpty
+          ? error.message
+          : 'The application could not be submitted. Your account was not '
+                'upgraded. Please review the form and retry.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(reason)));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -133,7 +140,7 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Apply to Sell')),
+      appBar: AppBar(title: const Text('Become a Seller')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -143,6 +150,8 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
               'Your Buyer account stays active while this application is reviewed. Submitting this form does not grant Seller access.',
               style: TextStyle(color: AppColors.textSecondary, height: 1.4),
             ),
+            const SizedBox(height: 16),
+            const _SellerRequirementsCard(),
             const SizedBox(height: 20),
             DropdownButtonFormField<String>(
               initialValue: _sellerType,
@@ -158,24 +167,62 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
               onChanged: (value) => setState(() => _sellerType = value!),
             ),
             const SizedBox(height: 12),
+            const _SectionLabel(
+              'Personal information',
+              hint:
+                  'Enter these exactly as they appear on your ID. An '
+                  'administrator will compare them with your ID photos.',
+            ),
+            TextFormField(
+              controller: _firstName,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.givenName],
+              decoration: const InputDecoration(labelText: 'First name'),
+              validator: (value) => Validators.name(value, label: 'First name'),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _lastName,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.familyName],
+              decoration: const InputDecoration(labelText: 'Last name'),
+              validator: (value) => Validators.name(value, label: 'Last name'),
+            ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _birthDate,
               readOnly: true,
               onTap: _pickBirthDate,
               decoration: const InputDecoration(
-                labelText: 'Birth date',
+                labelText: 'Birthdate',
+                hintText: 'Tap to choose',
                 suffixIcon: Icon(Icons.calendar_today_outlined),
               ),
               validator: (value) =>
-                  Validators.required(value, label: 'Birth date'),
+                  Validators.required(value, label: 'Birthdate'),
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _address,
-              maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Address'),
-              validator: (value) =>
-                  Validators.required(value, label: 'Address'),
+              minLines: 2,
+              maxLines: 4,
+              textCapitalization: TextCapitalization.words,
+              autofillHints: const [AutofillHints.fullStreetAddress],
+              decoration: const InputDecoration(
+                labelText: 'Complete address',
+                hintText: 'House no., street, barangay, city, province',
+                alignLabelWithHint: true,
+              ),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return 'Complete address is required';
+                if (text.length < 10) {
+                  return 'Include the street, barangay, city and province';
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
@@ -202,26 +249,15 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
                   setState(() => _identityDocumentType = value!),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _payoutMethod,
-              decoration: const InputDecoration(
-                labelText: 'Preferred payout method',
-              ),
-              items: const [
-                DropdownMenuItem(value: 'gcash', child: Text('GCash')),
-                DropdownMenuItem(value: 'maya', child: Text('Maya')),
-                DropdownMenuItem(value: 'bank', child: Text('Bank account')),
-              ],
-              onChanged: (value) => setState(() => _payoutMethod = value!),
-            ),
-            const SizedBox(height: 12),
             TextFormField(
               controller: _payoutName,
+              textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(
-                labelText: 'Payout account name',
+                labelText: 'Payout Account Name',
+                helperText: 'The name your earnings will be paid to',
               ),
               validator: (value) =>
-                  Validators.required(value, label: 'Payout account name'),
+                  Validators.name(value, label: 'Payout Account Name'),
             ),
             if (_sellerType == 'student') ...[
               const SizedBox(height: 12),
@@ -248,7 +284,7 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
             ],
             const SizedBox(height: 20),
             const Text(
-              'Next, you will verify your identity with your camera: the front and back of your ID, then a live selfie. Your ID images go directly to our verification partner, not to Cart.',
+              'Next, you will take photos of your ID and a selfie with your camera. They are stored privately, and an administrator checks that your details match your ID before approving you.',
               style: TextStyle(color: AppColors.textSecondary, height: 1.4),
             ),
             const SizedBox(height: 12),
@@ -290,6 +326,121 @@ class _SellerApplicationScreenState extends State<SellerApplicationScreen> {
       maxLines: maxLines,
       decoration: InputDecoration(labelText: label),
       validator: (value) => Validators.required(value, label: label),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String title;
+  final String? hint;
+
+  const _SectionLabel(this.title, {this.hint});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              hint!,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SellerRequirementsCard extends StatelessWidget {
+  const _SellerRequirementsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Seller requirements',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          SizedBox(height: 10),
+          _Requirement(
+            icon: Icons.badge_outlined,
+            text: 'A valid, unexpired government or school ID',
+          ),
+          _Requirement(
+            icon: Icons.camera_alt_outlined,
+            text: 'Camera access to photograph your ID and take a selfie',
+          ),
+          _Requirement(
+            icon: Icons.storefront_outlined,
+            text: 'Accurate applicant and shop information',
+          ),
+          _Requirement(
+            icon: Icons.fact_check_outlined,
+            text:
+                'Acceptance of the current Seller terms and final administrator approval',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Requirement extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _Requirement({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 19, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/product_model.dart';
 import '../models/user_model.dart';
+import 'flash_sale_repository.dart';
 import 'product_repository.dart';
 import 'voucher_repository.dart';
 import 'user_repository.dart';
@@ -21,10 +22,32 @@ class FollowedShopsPage {
 class ShopRepository {
   SupabaseClient get _supabase => Supabase.instance.client;
   final ProductRepository _productRepository = ProductRepository();
+  final FlashSaleRepository _flashSaleRepository = FlashSaleRepository();
   final UserRepository _userRepository = UserRepository();
 
   Future<UserModel?> getShop(int sellerId) {
     return _userRepository.getUserById(sellerId);
+  }
+
+  Future<List<UserModel>> searchShops(String query, {int limit = 8}) async {
+    final term = query.trim();
+    if (term.isEmpty) return const [];
+
+    final rows = await _supabase
+        .from('marketplace_profiles')
+        .select(
+          'id,first_name,last_name,account_type,shop_name,cover_image,'
+          'profile_image,is_live,is_verified_seller,seller_tier,'
+          'trust_score,created_at',
+        )
+        .eq('account_type', 'Seller')
+        .not('shop_name', 'is', null)
+        .ilike('shop_name', '%$term%')
+        .order('is_live', ascending: false)
+        .order('shop_name')
+        .limit(limit);
+
+    return rows.map(UserModel.fromSupabaseMap).toList();
   }
 
   Future<ProductPage> getShopProductsPage(
@@ -43,8 +66,14 @@ class ShopRepository {
     return _productRepository.getSellerProductMetrics(sellerId);
   }
 
-  Future<List<ProductModel>> getFlashSaleProducts(int sellerId) {
-    return _productRepository.getSellerFlashSaleProducts(sellerId);
+  /// Products in a live Marketing Centre flash sale. The shop page still
+  /// loads if the lookup fails.
+  Future<List<ProductModel>> getFlashSaleProducts(int sellerId) async {
+    try {
+      return await _flashSaleRepository.liveProductsForShop(sellerId);
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<List<ProductModel>> getTopProducts(int sellerId) {
@@ -83,6 +112,33 @@ class ShopRepository {
         .eq('follower_id', followerId)
         .order('created_at', ascending: false);
     return _shopsInFollowOrder(rows);
+  }
+
+  /// The people following a shop, newest first.
+  Future<FollowedShopsPage> getFollowersPage(
+    int sellerId, {
+    String? after,
+    int pageSize = 20,
+  }) async {
+    var query = _supabase
+        .from('shop_follows')
+        .select('follower_id,created_at')
+        .eq('seller_id', sellerId);
+    if (after != null) query = query.lt('created_at', after);
+    final rows = await query
+        .order('created_at', ascending: false)
+        .limit(pageSize + 1);
+    final pageRows = rows.take(pageSize).toList();
+    final followerIds = [
+      for (final row in pageRows) ?(row['follower_id'] as num?)?.toInt(),
+    ];
+    final users = await _userRepository.getUsersByIds(followerIds);
+    final byId = {for (final user in users) user.id: user};
+    return FollowedShopsPage(
+      items: [for (final id in followerIds) ?byId[id]],
+      cursor: pageRows.isEmpty ? after : pageRows.last['created_at'] as String?,
+      hasMore: rows.length > pageSize,
+    );
   }
 
   Future<FollowedShopsPage> getFollowedShopsPage(
@@ -129,7 +185,7 @@ class ShopRepository {
 
   Future<List<UserModel>> getLiveShops() async {
     final rows = await _supabase
-        .from('profiles')
+        .from('marketplace_profiles')
         .select()
         .eq('account_type', 'Seller')
         .eq('is_live', true);
@@ -141,10 +197,7 @@ class ShopRepository {
     bool isLive, {
     String? firebaseUid,
   }) async {
-    await _supabase
-        .from('profiles')
-        .update({'is_live': isLive})
-        .eq('id', sellerId);
+    await _supabase.rpc('set_my_live_status', params: {'new_is_live': isLive});
   }
 
   Future<void> recordVisit(int visitorId, int sellerId) async {

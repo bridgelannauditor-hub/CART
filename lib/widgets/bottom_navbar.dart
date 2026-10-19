@@ -10,17 +10,19 @@ class BottomNavbar extends StatelessWidget {
   const BottomNavbar({super.key, required this.currentIndex});
 
   void _onItemTapped(BuildContext context, int index) {
+    // Re-tapping the current tab shouldn't rebuild the whole screen.
+    if (index == currentIndex) return;
     switch (index) {
       case 0:
         Navigator.pushReplacementNamed(context, AppRoutes.home);
         break;
 
       case 1:
-        Navigator.pushReplacementNamed(context, AppRoutes.watch);
+        Navigator.pushReplacementNamed(context, AppRoutes.messages);
         break;
 
       case 2:
-        Navigator.pushReplacementNamed(context, AppRoutes.messages);
+        Navigator.pushReplacementNamed(context, AppRoutes.watch);
         break;
 
       case 3:
@@ -49,14 +51,14 @@ class BottomNavbar extends StatelessWidget {
           label: "Home",
         ),
         NavigationDestination(
-          icon: Icon(Icons.live_tv_outlined),
-          selectedIcon: Icon(Icons.live_tv),
-          label: "Watch",
-        ),
-        NavigationDestination(
           icon: MessageNavigationIcon(),
           selectedIcon: MessageNavigationIcon(selected: true),
           label: "Messages",
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.live_tv_outlined),
+          selectedIcon: Icon(Icons.live_tv),
+          label: "Watch",
         ),
         NavigationDestination(
           icon: Icon(Icons.receipt_long_outlined),

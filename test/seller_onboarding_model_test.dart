@@ -37,6 +37,26 @@ void main() {
     );
   });
 
+  test('students verify their school inbox before identity checks', () {
+    final unverified = stateWith(
+      application: {
+        'sellerType': 'student',
+        'schoolEmail': 'ana@university.edu.ph',
+        'schoolEmailVerified': false,
+      },
+    );
+    expect(unverified.step, SellerOnboardingStep.verifySchoolEmail);
+
+    final verified = stateWith(
+      application: {
+        'sellerType': 'student',
+        'schoolEmail': 'ana@university.edu.ph',
+        'schoolEmailVerified': true,
+      },
+    );
+    expect(verified.step, SellerOnboardingStep.verifyIdentity);
+  });
+
   test('each identity outcome maps to its own step', () {
     expect(
       stateWith(application: {'identityStatus': 'not_started'}).step,
@@ -115,6 +135,78 @@ void main() {
         application: {'status': 'rejected', 'appealCount': 2},
       ).canAppeal,
       isFalse,
+    );
+  });
+
+  test('customer-facing application statuses cover the full workflow', () {
+    expect(stateWith().applicationStatus, SellerApplicationStatus.notApplied);
+    expect(
+      stateWith(
+        application: {'identityStatus': 'not_started'},
+      ).applicationStatus,
+      SellerApplicationStatus.pendingVerification,
+    );
+    expect(
+      stateWith(application: {'identityStatus': 'pending'}).applicationStatus,
+      SellerApplicationStatus.verificationInProgress,
+    );
+    expect(
+      stateWith(
+        application: {'status': 'rejected', 'identityStatus': 'rejected'},
+      ).applicationStatus,
+      SellerApplicationStatus.verificationFailed,
+    );
+    expect(
+      stateWith(
+        application: {'identityStatus': 'needs_retry'},
+      ).applicationStatus,
+      SellerApplicationStatus.requiresResubmission,
+    );
+    expect(
+      stateWith(application: {'identityStatus': 'verified'}).applicationStatus,
+      SellerApplicationStatus.shopSetupRequired,
+    );
+    expect(
+      stateWith(
+        application: {'identityStatus': 'verified', 'shopStatus': 'submitted'},
+      ).applicationStatus,
+      SellerApplicationStatus.pendingAdminApproval,
+    );
+    expect(
+      stateWith(sellerAccountStatus: 'active').applicationStatus,
+      SellerApplicationStatus.approved,
+    );
+    expect(
+      stateWith(
+        application: {'status': 'rejected', 'identityStatus': 'verified'},
+      ).applicationStatus,
+      SellerApplicationStatus.rejected,
+    );
+  });
+
+  test('every required application status has the requested label', () {
+    expect(SellerApplicationStatus.notApplied.label, 'Not applied');
+    expect(
+      SellerApplicationStatus.pendingVerification.label,
+      'Pending verification',
+    );
+    expect(
+      SellerApplicationStatus.verificationInProgress.label,
+      'Verification in progress',
+    );
+    expect(
+      SellerApplicationStatus.verificationFailed.label,
+      'Verification failed',
+    );
+    expect(
+      SellerApplicationStatus.pendingAdminApproval.label,
+      'Pending admin approval',
+    );
+    expect(SellerApplicationStatus.approved.label, 'Approved');
+    expect(SellerApplicationStatus.rejected.label, 'Rejected');
+    expect(
+      SellerApplicationStatus.requiresResubmission.label,
+      'Requires resubmission',
     );
   });
 

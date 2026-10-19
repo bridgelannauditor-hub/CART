@@ -13,13 +13,16 @@ import '../../repositories/product_repository.dart';
 import '../../repositories/voucher_repository.dart';
 import '../../models/voucher_model.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../../services/category_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/product_card.dart';
 import '../../widgets/product_image.dart';
 import '../../widgets/rating_stars.dart';
+import '../../widgets/report_shop_sheet.dart';
 import 'cart_screen.dart';
 import 'chat_screen.dart';
+import 'follow_list_screen.dart';
 import 'notifications_screen.dart';
 import 'product_details_screen.dart';
 
@@ -229,6 +232,18 @@ class _ShopScreenState extends State<ShopScreen>
   // FOLLOW
   // =========================================================
 
+  void _openFollowers() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FollowListScreen(
+          mode: FollowListMode.followers,
+          userId: widget.sellerId,
+        ),
+      ),
+    );
+  }
+
   Future<void> _toggleFollow() async {
     final userId = _viewerId;
 
@@ -277,16 +292,23 @@ class _ShopScreenState extends State<ShopScreen>
                   (savedState == previousState ? 0 : (savedState ? 1 : -1));
         _isTogglingFollow = false;
       });
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Follow failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       if (!mounted) return;
       setState(() {
         _isFollowing = previousState;
         _followerCount = previousCount;
         _isTogglingFollow = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not update follow. Try again.')),
-      );
+      // Surface the server's reason (e.g. "This shop is not currently
+      // available.") instead of a generic message.
+      final reason = error is PostgrestException && error.message.isNotEmpty
+          ? error.message
+          : 'Could not update follow. Try again.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(reason)));
     }
   }
 
@@ -452,6 +474,7 @@ class _ShopScreenState extends State<ShopScreen>
           : Column(
               children: [
                 _buildShopProfile(),
+                _buildFollowOfferBanner(),
                 _buildTabBar(),
                 Expanded(
                   child: TabBarView(
@@ -465,6 +488,67 @@ class _ShopScreenState extends State<ShopScreen>
                 ),
               ],
             ),
+    );
+  }
+
+  /// Voucher teaser shown under the hero. It used to sit inside the hero's
+  /// Row, where its unbounded width pushed the Follow button off-screen.
+  Widget _buildFollowOfferBanner() {
+    if (_isOwnShop ||
+        _isFollowing ||
+        _campaign == null ||
+        !campaignCanClaim(_campaign!, DateTime.now())) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.local_offer_outlined,
+            size: 18,
+            color: AppColors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Follow this shop and receive ${VoucherModel('', _campaign!).label}',
+              style: const TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================
+  // REPORT
+  // =========================================================
+
+  Future<void> _reportShop() async {
+    final userId = _viewerId;
+    if (userId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please login first.')));
+      return;
+    }
+    await showReportShopSheet(
+      context,
+      shopId: widget.sellerId,
+      reporterId: userId,
+      shopName: _shopDisplayName,
     );
   }
 
@@ -548,7 +632,13 @@ class _ShopScreenState extends State<ShopScreen>
                             const SizedBox(height: 5),
                             Row(
                               children: [
-                                RatingStars(rating: _averageRating, size: 14),
+                                Icon(
+                                  _reviewCount > 0
+                                      ? Icons.star_rounded
+                                      : Icons.star_border_rounded,
+                                  size: 16,
+                                  color: const Color(0xFFFFC107),
+                                ),
                                 const SizedBox(width: 5),
                                 Text(
                                   _reviewCount > 0
@@ -563,14 +653,20 @@ class _ShopScreenState extends State<ShopScreen>
                               ],
                             ),
                             const SizedBox(height: 5),
-                            Text(
-                              '$_totalSold sold  •  $_followerCount ${_followerCount == 1 ? 'follower' : 'followers'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.white70,
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _openFollowers,
+                              child: Text(
+                                '$_totalSold sold  •  $_followerCount ${_followerCount == 1 ? 'follower' : 'followers'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.white70,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: Colors.white70,
+                                ),
                               ),
                             ),
                           ],
@@ -578,20 +674,6 @@ class _ShopScreenState extends State<ShopScreen>
                       ),
                     ),
 
-                    if (!_isOwnShop &&
-                        !_isFollowing &&
-                        _campaign != null &&
-                        campaignCanClaim(_campaign!, DateTime.now()))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(
-                          'Follow this shop and receive ${VoucherModel('', _campaign!).label}',
-                          style: const TextStyle(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
                     if (!_isOwnShop) ...[
                       const SizedBox(width: 10),
                       _buildHeroActions(),
@@ -880,6 +962,37 @@ class _ShopScreenState extends State<ShopScreen>
               await _refreshCartBadge();
             },
           ),
+
+          if (!_isOwnShop) ...[
+            const SizedBox(width: 8),
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              onSelected: (value) {
+                if (value == 'report') _reportShop();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(Icons.flag_outlined, color: AppColors.error),
+                      SizedBox(width: 10),
+                      Text('Report store'),
+                    ],
+                  ),
+                ),
+              ],
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.black.withValues(alpha: 0.35),
+                ),
+                child: const Icon(Icons.more_vert, color: Colors.white),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -975,6 +1088,7 @@ class _ShopScreenState extends State<ShopScreen>
                 label:
                     "$_followerCount ${_followerCount == 1 ? 'follower' : 'followers'}",
                 icon: Icons.people_alt_outlined,
+                onTap: _openFollowers,
               ),
             ],
           ),
@@ -1125,7 +1239,7 @@ class _ShopScreenState extends State<ShopScreen>
                 ],
               ),
               const SizedBox(height: 10),
-              _buildHorizontalProductList(_flashSaleProducts),
+              _buildProductGrid(_flashSaleProducts),
               const SizedBox(height: 22),
             ],
             const Text(
@@ -1137,7 +1251,7 @@ class _ShopScreenState extends State<ShopScreen>
               ),
             ),
             const SizedBox(height: 10),
-            _buildHorizontalProductList(
+            _buildProductGrid(
               _topProducts.isEmpty ? _products.take(10).toList() : _topProducts,
             ),
           ],
@@ -1146,27 +1260,45 @@ class _ShopScreenState extends State<ShopScreen>
     );
   }
 
-  Widget _buildHorizontalProductList(List<ProductModel> products) {
-    return SizedBox(
-      height: 220,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: products.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final product = products[index];
-          return SizedBox(
-            width: 140,
-            child: ProductCard(
-              name: product.productName,
-              price: "₱${product.price.toStringAsFixed(0)}",
-              image: product.image,
-              rating: product.rating,
-              onTap: () => _openProduct(product),
-            ),
-          );
-        },
+  /// Two-column grid that fills the full width, matching the Products tab.
+  Widget _buildProductGrid(List<ProductModel> products) {
+    // A lone product gets the full width instead of half a row.
+    if (products.length == 1) {
+      return SizedBox(
+        height: 240,
+        child: _buildShopProductCard(products.first),
+      );
+    }
+
+    return GridView.builder(
+      padding: EdgeInsets.zero, // GridView adds a status-bar inset by default
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: products.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 14,
+        childAspectRatio: 0.70,
       ),
+      itemBuilder: (context, index) => _buildShopProductCard(products[index]),
+    );
+  }
+
+  Widget _buildShopProductCard(ProductModel product) {
+    return ProductCard(
+      name: product.productName,
+      price: "₱${product.effectivePrice.toStringAsFixed(0)}",
+      originalPrice: product.hasDiscount
+          ? "₱${product.price.toStringAsFixed(0)}"
+          : null,
+      image: product.image,
+      rating: product.rating,
+      discountPercent: product.activeDiscountPercent,
+      flashSale: product.liveFlashSale != null,
+      freeShipping: product.freeShipping,
+      codAvailable: product.codAvailable,
+      onTap: () => _openProduct(product),
     );
   }
 
@@ -1271,9 +1403,16 @@ class _ShopScreenState extends State<ShopScreen>
                       final product = products[index];
                       return ProductCard(
                         name: product.productName,
-                        price: "₱${product.price.toStringAsFixed(0)}",
+                        price: "₱${product.effectivePrice.toStringAsFixed(0)}",
+                        originalPrice: product.hasDiscount
+                            ? "₱${product.price.toStringAsFixed(0)}"
+                            : null,
                         image: product.image,
                         rating: product.rating,
+                        discountPercent: product.activeDiscountPercent,
+                        flashSale: product.liveFlashSale != null,
+                        freeShipping: product.freeShipping,
+                        codAvailable: product.codAvailable,
                         onTap: () => _openProduct(product),
                       );
                     },
@@ -1470,11 +1609,20 @@ class _GlassIconButton extends StatelessWidget {
 class _StatChip extends StatelessWidget {
   final String label;
   final IconData icon;
+  final VoidCallback? onTap;
 
-  const _StatChip({required this.label, required this.icon});
+  const _StatChip({required this.label, required this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: _buildChip(),
+    );
+  }
+
+  Widget _buildChip() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(

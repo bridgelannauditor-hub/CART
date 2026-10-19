@@ -1,109 +1,44 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
 
 import '../constants/app_colors.dart';
 
-/// A tappable "frame" that plays a muted, looping preview video with
-/// the category title overlaid at the bottom. Falls back to a plain
-/// gradient tile with an icon if the video can't load (e.g. offline,
-/// or the host returns 403/404).
-class CategoryVideoCard extends StatefulWidget {
+/// A tappable gradient tile for a craft category group: a large lead icon, a
+/// row of the group's technique icons, and the title at the bottom. It is
+/// intentionally icon-only (no network video) so it renders instantly and
+/// never shows a loading spinner.
+class CategoryVideoCard extends StatelessWidget {
   final String title;
-  final String videoUrl;
-  final IconData fallbackIcon;
+  final IconData leadIcon;
+  final List<IconData> icons;
   final VoidCallback onTap;
 
   const CategoryVideoCard({
     super.key,
     required this.title,
-    required this.videoUrl,
-    required this.fallbackIcon,
+    required this.leadIcon,
+    required this.icons,
     required this.onTap,
   });
 
   @override
-  State<CategoryVideoCard> createState() => _CategoryVideoCardState();
-}
-
-class _CategoryVideoCardState extends State<CategoryVideoCard> {
-  VideoPlayerController? _controller;
-  bool _failed = false;
-  bool _disposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(widget.videoUrl),
-    );
-
-    // Playback errors that happen after initialization surface here
-    // as `hasError`, not as a thrown exception.
-    void onChange() {
-      if (_disposed || !mounted) return;
-      if (controller.value.hasError && !_failed) {
-        setState(() => _failed = true);
-      }
-    }
-
-    controller.addListener(onChange);
-
-    try {
-      // Don't let a stalled connection keep a native player alive forever.
-      await controller.initialize().timeout(const Duration(seconds: 12));
-
-      if (_disposed || !mounted) {
-        controller.removeListener(onChange);
-        await controller.dispose();
-        return;
-      }
-
-      await controller.setLooping(true);
-      await controller.setVolume(0);
-      await controller.play();
-
-      setState(() => _controller = controller);
-    } catch (_) {
-      // A failed load (403, offline, timeout) still holds a native
-      // ExoPlayer. Release it, otherwise every failure leaks one.
-      controller.removeListener(onChange);
-      await controller.dispose();
-
-      if (_disposed || !mounted) return;
-      setState(() => _failed = true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final controller = _controller;
-    final ready =
-        !_failed &&
-        controller != null &&
-        controller.value.isInitialized &&
-        !controller.value.hasError;
-
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: ClipRRect(
+    return Semantics(
+      button: true,
+      label: title,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(20),
-        child: Container(
+        child: Ink(
           height: 190,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.primary, AppColors.darkGrey],
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.08),
@@ -112,77 +47,57 @@ class _CategoryVideoCardState extends State<CategoryVideoCard> {
               ),
             ],
           ),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (ready)
-                FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(
-                    width: controller.value.size.width,
-                    height: controller.value.size.height,
-                    child: VideoPlayer(controller),
-                  ),
-                )
-              else if (_failed)
-                Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [AppColors.primary, AppColors.darkGrey],
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.14),
+                        ),
+                        child: Icon(leadIcon, color: Colors.white, size: 38),
+                      ),
                     ),
                   ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    widget.fallbackIcon,
-                    color: Colors.white.withValues(alpha: 0.85),
-                    size: 42,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      for (final icon in icons.take(4))
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: Icon(
+                            icon,
+                            size: 16,
+                            color: Colors.white.withValues(alpha: 0.75),
+                          ),
+                        ),
+                    ],
                   ),
-                )
-              else
-                Container(
-                  color: AppColors.lightGrey,
-                  alignment: Alignment.center,
-                  child: const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ),
-
-              // Bottom gradient scrim so the title stays readable.
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 28, 14, 14),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.65),
-                      ],
-                    ),
-                  ),
-                  child: Text(
-                    widget.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      height: 1.2,
-                    ),
-                  ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

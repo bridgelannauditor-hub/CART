@@ -51,3 +51,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase config and keys: each developer supplies their own (see docs/PUSH_NOTIFICATIONS.md)
+/android/app/google-services.json
+*-firebase-adminsdk-*.json
