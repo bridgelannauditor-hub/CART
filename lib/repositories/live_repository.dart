@@ -143,7 +143,7 @@ class LiveRepository {
         .select('id,broadcast_id,seller_id')
         .inFilter('id', sessionIds.toList());
     final profiles = await _supabase
-        .from('profiles')
+        .from('marketplace_profiles')
         .select('id,first_name,last_name,shop_name')
         .inFilter('id', senderIds.toList());
     final sessionById = {for (final row in sessions) row['id']: row};

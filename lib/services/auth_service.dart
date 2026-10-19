@@ -7,11 +7,22 @@ import '../models/user_model.dart';
 /// Authentication and profile access backed by Supabase Auth + Postgres.
 class AuthService {
   static const _mobileRedirect = 'io.supabase.flutter://login-callback/';
+  static bool _oauthRedirectPending = false;
 
   final DatabaseHelper _databaseHelper = DatabaseHelper.instance;
   final SupabaseClient _client = Supabase.instance.client;
 
   GoTrueClient get _auth => _client.auth;
+
+  static bool takeOAuthRedirectPending() {
+    final pending = _oauthRedirectPending;
+    _oauthRedirectPending = false;
+    return pending;
+  }
+
+  static void clearOAuthRedirectPending() {
+    _oauthRedirectPending = false;
+  }
 
   Future<String> register(UserModel user, {required String password}) async {
     final email = user.email.trim().toLowerCase();
@@ -70,6 +81,40 @@ class AuthService {
     }
   }
 
+  /// Warnings from an administrator that the user has not acknowledged yet.
+  /// A failed lookup returns none so a network hiccup never blocks sign-in.
+  Future<List<Map<String, dynamic>>> pendingWarnings() async {
+    try {
+      final result = await _client.rpc('my_warnings');
+      if (result is List) {
+        return [for (final w in result) Map<String, dynamic>.from(w as Map)];
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  Future<void> acknowledgeWarning(int warningId) async {
+    try {
+      await _client.rpc(
+        'acknowledge_account_warning',
+        params: {'warning_id': warningId},
+      );
+    } catch (_) {}
+  }
+
+  /// The suspension reason ('' when none was given) or null when the account
+  /// is in good standing. A failed lookup is treated as not suspended: the
+  /// database refuses a suspended account's writes regardless.
+  Future<String?> suspensionReason() async {
+    try {
+      final result = await _client.rpc('my_suspension');
+      if (result is Map && result['suspended'] == true) {
+        return result['reason'] as String? ?? '';
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<UserModel?> _loadAuthenticatedProfile() async {
     final authUser = _auth.currentUser;
     if (authUser == null) return null;
@@ -90,53 +135,36 @@ class AuthService {
     return profile;
   }
 
-  Future<SocialSignInResult> signInWithGoogle({
-    String accountType = 'Customer',
-    String? shopName,
-  }) {
-    return _beginOAuth(
-      OAuthProvider.google,
-      providerName: 'Google',
-      accountType: accountType,
-    );
+  Future<SocialSignInResult> signInWithGoogle() {
+    return _beginOAuth(OAuthProvider.google, providerName: 'Google');
   }
 
-  Future<SocialSignInResult> signInWithFacebook({
-    String accountType = 'Customer',
-    String? shopName,
-  }) {
-    return _beginOAuth(
-      OAuthProvider.facebook,
-      providerName: 'Facebook',
-      accountType: accountType,
-    );
+  Future<SocialSignInResult> signInWithFacebook() {
+    return _beginOAuth(OAuthProvider.facebook, providerName: 'Facebook');
   }
 
   Future<SocialSignInResult> _beginOAuth(
     OAuthProvider provider, {
     required String providerName,
-    required String accountType,
   }) async {
-    if (accountType == 'Seller') {
-      return const SocialSignInResult.failure(
-        'Create seller accounts with email and password so verification details are preserved.',
-      );
-    }
     try {
+      _oauthRedirectPending = true;
       final launched = await _auth.signInWithOAuth(
         provider,
         redirectTo: kIsWeb ? null : _mobileRedirect,
       );
       if (!launched) {
+        _oauthRedirectPending = false;
         return SocialSignInResult.failure(
           '$providerName sign-in could not be opened.',
         );
       }
-      // OAuth completes through the app redirect. Splash restores the session.
-      return const SocialSignInResult.cancelled();
+      return const SocialSignInResult.pending();
     } on AuthException catch (error) {
+      _oauthRedirectPending = false;
       return SocialSignInResult.failure(error.message);
     } catch (_) {
+      _oauthRedirectPending = false;
       return SocialSignInResult.failure(
         '$providerName sign-in is not configured in Supabase yet.',
       );
@@ -157,6 +185,23 @@ class AuthService {
       return error.message;
     } catch (_) {
       return 'Could not send the reset email. Please try again.';
+    }
+  }
+
+  Future<String?> completePasswordRecovery(String newPassword) async {
+    if (_auth.currentSession == null) {
+      return 'This password reset link has expired. Request a new one.';
+    }
+    try {
+      await _auth.updateUser(UserAttributes(password: newPassword.trim()));
+      return null;
+    } on AuthException catch (error) {
+      if (error.code == 'weak_password') {
+        return 'Password is too weak — use at least 8 characters';
+      }
+      return error.message;
+    } catch (_) {
+      return 'Could not update your password. Please try again.';
     }
   }
 
@@ -273,18 +318,16 @@ class AuthService {
 class SocialSignInResult {
   final UserModel? user;
   final String? error;
-  final bool wasCancelled;
+  final bool isPending;
 
   const SocialSignInResult.success(UserModel this.user)
     : error = null,
-      wasCancelled = false;
+      isPending = false;
 
-  const SocialSignInResult.failure(this.error)
-    : user = null,
-      wasCancelled = false;
+  const SocialSignInResult.failure(this.error) : user = null, isPending = false;
 
-  const SocialSignInResult.cancelled()
+  const SocialSignInResult.pending()
     : user = null,
       error = null,
-      wasCancelled = true;
+      isPending = true;
 }

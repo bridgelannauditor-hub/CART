@@ -7,6 +7,7 @@ import '../../database/database_helper.dart';
 import '../../repositories/product_repository.dart';
 import '../../models/cart_item_model.dart';
 import '../../models/product_model.dart';
+import '../../models/user_model.dart';
 import '../../constants/app_colors.dart';
 import '../../widgets/bottom_navbar.dart';
 
@@ -18,10 +19,12 @@ import '../../data/craft_categories.dart';
 import '../../repositories/notification_repository.dart';
 import '../../repositories/order_repository.dart';
 import '../../repositories/search_history_repository.dart';
+import '../../repositories/shop_repository.dart';
 import 'notifications_screen.dart';
 import 'checkout_screen.dart';
 import 'craft_subcategory_screen.dart';
 import 'product_details_screen.dart';
+import 'shop_screen.dart';
 import '../ai/ai_assistant_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -38,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final OrderRepository _orderRepository = OrderRepository();
   final SearchHistoryRepository _searchHistoryRepository =
       SearchHistoryRepository();
+  final ShopRepository _shopRepository = ShopRepository();
   final TextEditingController _searchController = TextEditingController();
 
   int cartCount = 0;
@@ -52,6 +56,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hasMoreProducts = true;
   int? _productCursor;
   String _searchQuery = '';
+  List<UserModel> _shopResults = [];
+  bool _isSearchingShops = false;
+  int _shopSearchRequest = 0;
   List<String> _recentSearches = [];
   bool _showRecentSearches = false;
 
@@ -237,6 +244,122 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     FocusScope.of(context).unfocus();
     _storeSearch(value);
+    _searchShops(value);
+  }
+
+  Future<void> _searchShops(String value) async {
+    final query = value.trim();
+    final request = ++_shopSearchRequest;
+    if (query.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _shopResults = [];
+          _isSearchingShops = false;
+        });
+      }
+      return;
+    }
+
+    setState(() => _isSearchingShops = true);
+    try {
+      final shops = await _shopRepository.searchShops(query);
+      if (!mounted || request != _shopSearchRequest) return;
+      setState(() {
+        _shopResults = shops;
+        _isSearchingShops = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Shop search failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted || request != _shopSearchRequest) return;
+      setState(() {
+        _shopResults = [];
+        _isSearchingShops = false;
+      });
+    }
+  }
+
+  Widget _buildShopResults() {
+    if (_isSearchingShops) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 14),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_shopResults.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Shops',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        ..._shopResults.map(
+          (shop) => Card(
+            margin: const EdgeInsets.only(bottom: 10),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: AppColors.lightGrey),
+            ),
+            child: ListTile(
+              onTap: shop.id == null
+                  ? null
+                  : () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ShopScreen(sellerId: shop.id!),
+                      ),
+                    ),
+              leading: CircleAvatar(
+                radius: 23,
+                backgroundColor: AppColors.lightGrey,
+                child: (shop.profileImage ?? '').isEmpty
+                    ? Text(
+                        (shop.shopName ?? 'S')[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      )
+                    : ClipOval(
+                        child: SizedBox(
+                          width: 46,
+                          height: 46,
+                          child: ProductImage(
+                            path: shop.profileImage!,
+                            fit: BoxFit.cover,
+                            placeholder: const Icon(
+                              Icons.storefront_rounded,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              title: Text(
+                shop.shopName ?? 'Shop',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                '${shop.firstName} ${shop.lastName}'.trim(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: shop.isLive
+                  ? const Chip(
+                      label: Text('LIVE'),
+                      visualDensity: VisualDensity.compact,
+                    )
+                  : const Icon(Icons.chevron_right_rounded),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
   }
 
   List<ProductModel> get _displayedProducts {
@@ -326,11 +449,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildProductCard(ProductModel product) {
     return ProductCard(
       name: product.productName,
-      price: "₱${product.price.toStringAsFixed(0)}",
+      price: "₱${product.effectivePrice.toStringAsFixed(0)}",
+      originalPrice: product.hasDiscount
+          ? "₱${product.price.toStringAsFixed(0)}"
+          : null,
       image: product.image,
       rating: product.rating,
       soldCount: product.totalSold,
-      discountPercent: product.discountPercent,
+      discountPercent: product.activeDiscountPercent,
+      flashSale: product.liveFlashSale != null,
       freeShipping: product.freeShipping,
       codAvailable: product.codAvailable,
       onTap: () {
@@ -534,6 +661,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _searchQuery = value;
                               _showRecentSearches = value.trim().isEmpty;
                             });
+                            _searchShops(value);
                           },
                           onSubmitted: (value) {
                             _storeSearch(value);
@@ -866,6 +994,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   const SizedBox(height: 14),
 
+                  _buildShopResults(),
+
+                  if (!_isSearchingShops && _shopResults.isNotEmpty) ...[
+                    const Text(
+                      'Products',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
                   // =================================================
                   // SEARCH LOADING
                   // =================================================
@@ -882,10 +1023,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   // =================================================
                   // NO SEARCH RESULTS
                   // =================================================
-                  else if (displayedProducts.isEmpty)
+                  else if (displayedProducts.isEmpty && _shopResults.isEmpty)
                     _buildEmptyProducts(
-                      message: 'No products match "${_searchQuery.trim()}".',
+                      message:
+                          'No products or shops match "${_searchQuery.trim()}".',
                     )
+                  else if (displayedProducts.isEmpty)
+                    const SizedBox.shrink()
                   // =================================================
                   // SEARCH RESULT GRID
                   // =================================================
@@ -929,12 +1073,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               rank: index + 1,
                               name: bestSellerProduct.productName,
                               price:
-                                  "₱${bestSellerProduct.price.toStringAsFixed(0)}",
+                                  "₱${bestSellerProduct.effectivePrice.toStringAsFixed(0)}",
+                              originalPrice: bestSellerProduct.hasDiscount
+                                  ? "₱${bestSellerProduct.price.toStringAsFixed(0)}"
+                                  : null,
                               image: bestSellerProduct.image,
                               rating: bestSellerProduct.rating,
                               soldCount: entry.$2,
                               discountPercent:
-                                  bestSellerProduct.discountPercent,
+                                  bestSellerProduct.activeDiscountPercent,
                               freeShipping: bestSellerProduct.freeShipping,
                               codAvailable: bestSellerProduct.codAvailable,
                               isAvailable: bestSellerProduct.stock > 0,
@@ -1110,6 +1257,7 @@ class _BestSellerCard extends StatelessWidget {
   final int rank;
   final String name;
   final String price;
+  final String? originalPrice;
   final String image;
   final double? rating;
   final int soldCount;
@@ -1125,6 +1273,7 @@ class _BestSellerCard extends StatelessWidget {
     required this.rank,
     required this.name,
     required this.price,
+    this.originalPrice,
     required this.image,
     this.rating,
     required this.soldCount,
@@ -1136,16 +1285,6 @@ class _BestSellerCard extends StatelessWidget {
     required this.onBuy,
     required this.onTap,
   });
-
-  String? get _originalPrice {
-    if (discountPercent <= 0 || discountPercent >= 100) return null;
-    final numericPrice = double.tryParse(
-      price.replaceAll(RegExp(r'[^0-9.]'), ''),
-    );
-    if (numericPrice == null) return null;
-    final original = numericPrice / (1 - discountPercent / 100);
-    return '₱${original.toStringAsFixed(2)}';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1252,10 +1391,10 @@ class _BestSellerCard extends StatelessWidget {
                           color: AppColors.primary,
                         ),
                       ),
-                      if (_originalPrice != null) ...[
+                      if (originalPrice != null) ...[
                         const SizedBox(width: 7),
                         Text(
-                          _originalPrice!,
+                          originalPrice!,
                           style: const TextStyle(
                             fontSize: 9,
                             color: Colors.grey,
@@ -1471,11 +1610,14 @@ class _BestSellersScreen extends StatelessWidget {
           return _BestSellerCard(
             rank: index + 1,
             name: product.productName,
-            price: '₱${product.price.toStringAsFixed(0)}',
+            price: '₱${product.effectivePrice.toStringAsFixed(0)}',
+            originalPrice: product.hasDiscount
+                ? '₱${product.price.toStringAsFixed(0)}'
+                : null,
             image: product.image,
             rating: product.rating,
             soldCount: entry.$2,
-            discountPercent: product.discountPercent,
+            discountPercent: product.activeDiscountPercent,
             freeShipping: product.freeShipping,
             codAvailable: product.codAvailable,
             isAvailable: product.stock > 0,

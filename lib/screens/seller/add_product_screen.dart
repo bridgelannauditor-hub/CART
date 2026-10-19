@@ -50,7 +50,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
   String? selectedMaterial;
   String? selectedOccasion;
   List<String> selectedTags = [];
-  bool isFlashSale = false;
   bool isFreeShipping = false;
   bool isCodAvailable = false;
   bool isSaving = false;
@@ -273,7 +272,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
       craftType: selectedCraftType,
       material: selectedMaterial,
       occasion: selectedOccasion,
-      isFlashSale: isFlashSale,
       discountPercent: int.tryParse(discountController.text.trim()) ?? 0,
       freeShipping: isFreeShipping,
       codAvailable: isCodAvailable,
@@ -528,37 +526,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
               MakingProcessEditor(key: _makingProcessKey),
 
               const SizedBox(height: 18),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.lightGrey),
-                ),
-                child: SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  activeThumbColor: AppColors.secondary,
-                  title: const Text(
-                    "Flash Sale",
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                  ),
-                  subtitle: const Text(
-                    "Feature this product in your shop's Flash Sale.",
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  value: isFlashSale,
-                  onChanged: (value) => setState(() => isFlashSale = value),
-                ),
-              ),
-
-              const SizedBox(height: 12),
 
               Container(
                 padding: const EdgeInsets.symmetric(

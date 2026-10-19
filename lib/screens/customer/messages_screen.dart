@@ -249,7 +249,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       bottomNavigationBar: widget.isSeller
           ? const SellerBottomNavbar(currentIndex: 1)
           : widget.showBottomNav
-          ? const BottomNavbar(currentIndex: 2)
+          ? const BottomNavbar(currentIndex: 1)
           : null,
       body: RefreshIndicator(
         color: AppColors.primary,

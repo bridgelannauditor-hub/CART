@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/product_media_model.dart';
 import '../models/product_model.dart';
 import '../services/category_service.dart';
+import 'flash_sale_repository.dart';
 
 class ProductPage {
   final List<ProductModel> items;
@@ -37,9 +40,31 @@ class SellerProductMetrics {
 class ProductRepository {
   final SupabaseClient _client = Supabase.instance.client;
   final CategoryService _categoryService = CategoryService();
+  final FlashSaleRepository _flashSaleRepository = FlashSaleRepository();
 
-  List<ProductModel> _models(List<Map<String, dynamic>> rows) =>
-      rows.map(ProductModel.fromSupabaseMap).toList();
+  Future<List<ProductModel>> _models(List<Map<String, dynamic>> rows) =>
+      _withLiveFlashSales(rows.map(ProductModel.fromSupabaseMap).toList());
+
+  /// Attaches live Marketing Centre flash sales so every price display shows
+  /// the flash price. Listings still load if the lookup fails.
+  Future<List<ProductModel>> _withLiveFlashSales(
+    List<ProductModel> products,
+  ) async {
+    final ids = [for (final product in products) ?product.id];
+    if (ids.isEmpty) return products;
+    try {
+      final live = await _flashSaleRepository.liveByProductIds(ids);
+      if (live.isEmpty) return products;
+      return [
+        for (final product in products)
+          live.containsKey(product.id)
+              ? product.withFlashSale(live[product.id])
+              : product,
+      ];
+    } catch (_) {
+      return products;
+    }
+  }
 
   Future<List<ProductModel>> getProductsBySeller(int sellerId) async {
     final rows = await _client
@@ -105,20 +130,6 @@ class ProductRepository {
     return _models(rows);
   }
 
-  Future<List<ProductModel>> getSellerFlashSaleProducts(
-    int sellerId, {
-    int limit = 10,
-  }) async {
-    final rows = await _client
-        .from('products')
-        .select()
-        .eq('seller_id', sellerId)
-        .eq('is_flash_sale', true)
-        .order('id', ascending: false)
-        .limit(limit);
-    return _models(rows);
-  }
-
   Future<List<ProductModel>> getTopSellingProducts({int limit = 10}) async {
     final rows = await _client
         .from('products')
@@ -137,6 +148,25 @@ class ProductRepository {
     return _models(rows);
   }
 
+  /// Newest products that have at least one uploaded video.
+  Future<List<ProductModel>> getProductsWithVideos({int limit = 40}) async {
+    final rows = await _client
+        .from('products')
+        .select()
+        // jsonb containment; `contains` would format a List as a Postgres
+        // array literal instead of JSON.
+        .filter(
+          'media',
+          'cs',
+          jsonEncode([
+            {'media_type': 'video'},
+          ]),
+        )
+        .order('id', ascending: false)
+        .limit(limit);
+    return _models(rows);
+  }
+
   Future<ProductPage> getProductsPage({
     int? afterProductId,
     int pageSize = 20,
@@ -148,17 +178,14 @@ class ProductRepository {
     return _toPage(rows, afterProductId, pageSize);
   }
 
-  Future<List<ProductModel>> getFlashSaleProductsForSeller(int sellerId) {
-    return getSellerFlashSaleProducts(sellerId, limit: 1000);
-  }
-
   Future<ProductModel?> getProductById(int id) async {
     final row = await _client
         .from('products')
         .select()
         .eq('id', id)
         .maybeSingle();
-    return row == null ? null : ProductModel.fromSupabaseMap(row);
+    if (row == null) return null;
+    return (await _models([row])).single;
   }
 
   Future<List<ProductModel>> getProductsByIds(List<int> ids) async {
@@ -202,11 +229,22 @@ class ProductRepository {
       category?.categoryName,
       id: id,
     );
-    await _client
-        .from('products')
-        .update(toSave.toSupabaseMap(includeId: false))
-        .eq('id', id);
-    return id;
+    // Sellers can only update the columns granted in the initial migration;
+    // sending seller_id (even unchanged) makes Postgres reject the whole update.
+    final values = toSave.toSupabaseMap(includeId: false)..remove('seller_id');
+    try {
+      final rows = await _client
+          .from('products')
+          .update(values)
+          .eq('id', id)
+          .select('id');
+      if (rows.isEmpty) {
+        throw StateError("You don't have permission to edit this product.");
+      }
+      return id;
+    } on PostgrestException catch (error) {
+      throw StateError(error.message);
+    }
   }
 
   Future<int> deleteProduct(int id) async {
@@ -316,13 +354,13 @@ class ProductRepository {
         .eq('id', productId);
   }
 
-  ProductPage _toPage(
+  Future<ProductPage> _toPage(
     List<Map<String, dynamic>> rows,
     int? previousCursor,
     int pageSize,
-  ) {
+  ) async {
     final hasMore = rows.length > pageSize;
-    final items = _models(rows.take(pageSize).toList());
+    final items = await _models(rows.take(pageSize).toList());
     return ProductPage(
       items: items,
       nextProductId: items.isEmpty ? previousCursor : items.last.id,
@@ -353,7 +391,6 @@ class ProductRepository {
       craftType: product.craftType,
       material: product.material,
       occasion: product.occasion,
-      isFlashSale: product.isFlashSale,
       discountPercent: product.discountPercent,
       freeShipping: product.freeShipping,
       codAvailable: product.codAvailable,

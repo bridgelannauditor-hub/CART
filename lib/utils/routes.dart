@@ -2,8 +2,8 @@ class AppRoutes {
   static const String splash = "/";
   static const String login = "/login";
   static const String register = "/register";
-  static const String registerDetails = "/register/details";
   static const String forgotPassword = "/forgot-password";
+  static const String resetPassword = "/reset-password";
 
   static const String home = "/home";
   static const String categories = "/categories";
@@ -22,11 +22,12 @@ class AppRoutes {
   static const String sellerLive = "/seller-live";
   static const String sellerProfile = "/seller-profile";
 
+  static const String adminDashboard = "/admin-dashboard";
+
   static const Set<String> publicRoutes = {
     splash,
     login,
     register,
-    registerDetails,
     forgotPassword,
   };
 
@@ -51,6 +52,8 @@ class AppRoutes {
     sellerProfile,
   };
 
+  static const Set<String> authenticatedRoutes = {adminDashboard};
+
   static String resolveForSession(
     String? requested, {
     required bool loggedIn,
@@ -58,15 +61,20 @@ class AppRoutes {
   }) {
     final route = requested ?? splash;
     if (route == splash) return splash;
+    // A recovery callback creates a temporary Supabase session. Keep this
+    // destination available even when another app session was already cached.
+    if (route == resetPassword) return resetPassword;
 
     final isSeller = loggedIn && accountType == 'Seller';
-    final isCustomer = loggedIn && accountType == 'Customer';
     if (!publicRoutes.contains(route) && !loggedIn) return login;
-    if (customerRoutes.contains(route) && !isCustomer) {
-      return isSeller ? sellerDashboard : login;
+    if (authenticatedRoutes.contains(route)) return route;
+    // Approved Sellers retain the complete Buyer experience. These routes
+    // select the shopping interface; they do not reduce backend permissions.
+    if (customerRoutes.contains(route) && !loggedIn) {
+      return login;
     }
     if (sellerRoutes.contains(route) && !isSeller) {
-      return isCustomer ? home : login;
+      return loggedIn ? home : login;
     }
     if (loggedIn && publicRoutes.contains(route)) {
       return isSeller ? sellerDashboard : home;

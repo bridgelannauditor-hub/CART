@@ -6,6 +6,7 @@ import '../../repositories/order_repository.dart';
 import '../../services/order_functions_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/date_formatter.dart';
+import '../../utils/orders_live_refresh.dart';
 import '../../widgets/product_image.dart';
 import '../../widgets/seller_bottom_navbar.dart';
 import 'seller_tracking_screen.dart';
@@ -44,10 +45,52 @@ class _SellerOrdersScreenState extends State<SellerOrdersScreen> {
   bool _isLoadingMore = false;
   String _filter = "All";
 
+  late final OrdersLiveRefresh _live = OrdersLiveRefresh(
+    name: 'seller-orders',
+    onChange: _refreshQuietly,
+  );
+
   @override
   void initState() {
     super.initState();
     _loadOrders();
+    _live.start();
+  }
+
+  @override
+  void dispose() {
+    _live.dispose();
+    super.dispose();
+  }
+
+  /// Re-reads the newest orders when one changes (a new order arrives or a
+  /// status changes) without a loading spinner, keeping older pages loaded.
+  Future<void> _refreshQuietly() async {
+    final sellerId = SessionService.userId;
+    if (!mounted || sellerId == null) return;
+    try {
+      final current = await _ordersFuture;
+      final page = await _orderRepository.getSellerOrderPage(sellerId);
+      if (!mounted) return;
+      final freshIds = {for (final item in page.items) item.itemId};
+      final oldest = page.items.isEmpty ? null : page.items.last.orderDate;
+      final older = [
+        for (final item in current)
+          if (!freshIds.contains(item.itemId) &&
+              oldest != null &&
+              item.orderDate.compareTo(oldest) < 0)
+            item,
+      ];
+      setState(() {
+        _ordersFuture = Future.value([...page.items, ...older]);
+        if (older.isEmpty) {
+          _orderCursor = page.cursor;
+          _hasMoreOrders = page.hasMore;
+        }
+      });
+    } catch (_) {
+      // A failed background refresh keeps what is already on screen.
+    }
   }
 
   void _loadOrders() {

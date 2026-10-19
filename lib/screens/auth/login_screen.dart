@@ -7,6 +7,9 @@ import '../../constants/app_colors.dart';
 import '../../widgets/custom_button.dart';
 import '../../widgets/custom_textfield.dart';
 import '../../utils/routes.dart';
+import '../../widgets/account_warning_dialog.dart';
+import 'account_suspended_screen.dart';
+import '../../repositories/admin_repository.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -57,7 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    _finishLogin(user);
+    await _finishLogin(user);
   }
 
   Future<void> socialLogin(String provider) async {
@@ -77,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
       loadingProvider = null;
     });
 
-    if (result.wasCancelled) return;
+    if (result.isPending) return;
 
     final user = result.user;
     if (user == null) {
@@ -94,11 +97,33 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    _finishLogin(user);
+    await _finishLogin(user);
   }
 
-  void _finishLogin(UserModel user) {
+  Future<void> _finishLogin(UserModel user) async {
+    // A suspended account sees why instead of the dashboard or home page.
+    final suspension = await AuthService().suspensionReason();
+    if (!mounted) return;
+    if (suspension != null) {
+      await AuthService().logout();
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AccountSuspendedScreen(reason: suspension),
+        ),
+        (_) => false,
+      );
+      return;
+    }
+
+    await showPendingAccountWarnings(context);
+    if (!mounted) return;
+
     SessionService.loginUser(user);
+
+    final isAdmin = await AdminRepository().isAdmin();
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -109,7 +134,9 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
 
-    if (user.accountType == "Seller") {
+    if (isAdmin) {
+      Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
+    } else if (user.accountType == "Seller") {
       Navigator.pushReplacementNamed(context, AppRoutes.sellerDashboard);
     } else {
       Navigator.pushReplacementNamed(context, AppRoutes.home);

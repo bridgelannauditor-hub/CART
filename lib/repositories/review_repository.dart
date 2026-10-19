@@ -44,14 +44,34 @@ class ReviewRepository {
         .select('first_name,last_name')
         .eq('id', customerId)
         .single();
-    await _supabase.from('reviews').upsert({
-      'product_id': productId,
-      'customer_id': customerId,
+    final values = {
       'rating': rating,
       'comment': comment?.trim().isEmpty == true ? null : comment?.trim(),
       'customer_first_name': profile['first_name'] ?? '',
       'customer_last_name': profile['last_name'] ?? '',
-    }, onConflict: 'product_id,customer_id');
+    };
+    // Not an upsert: its conflict update also rewrites product_id and
+    // customer_id, which customers may not update, so the save was refused
+    // with "permission denied" even for a first review.
+    final existing = await _supabase
+        .from('reviews')
+        .select('id')
+        .eq('product_id', productId)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+    if (existing == null) {
+      await _supabase.from('reviews').insert({
+        ...values,
+        'product_id': productId,
+        'customer_id': customerId,
+      });
+    } else {
+      await _supabase
+          .from('reviews')
+          .update(values)
+          .eq('product_id', productId)
+          .eq('customer_id', customerId);
+    }
   }
 
   Future<ReviewPage> getReviewsPage(

@@ -325,8 +325,15 @@ class _CategoryProductsScreenState extends State<CategoryProductsScreen> {
                     final product = _products[index];
                     return ProductCard(
                       name: product.productName,
-                      price: "₱${product.price.toStringAsFixed(0)}",
+                      price: "₱${product.effectivePrice.toStringAsFixed(0)}",
+                      originalPrice: product.hasDiscount
+                          ? "₱${product.price.toStringAsFixed(0)}"
+                          : null,
                       image: product.image,
+                      discountPercent: product.activeDiscountPercent,
+                      flashSale: product.liveFlashSale != null,
+                      freeShipping: product.freeShipping,
+                      codAvailable: product.codAvailable,
                       onTap: () {
                         Navigator.push(
                           context,

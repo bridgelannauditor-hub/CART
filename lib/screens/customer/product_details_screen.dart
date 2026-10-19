@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../constants/app_colors.dart';
 import '../../models/cart_item_model.dart';
+import '../../models/flash_sale_model.dart';
 import '../../models/product_model.dart';
 import '../../models/product_option_model.dart';
 import '../../models/user_model.dart';
 import '../../database/database_helper.dart';
+import '../../repositories/flash_sale_repository.dart';
 import '../../repositories/shop_repository.dart';
 import '../../repositories/product_repository.dart';
 import '../../repositories/moderation_repository.dart';
@@ -13,6 +17,7 @@ import '../../services/session_service.dart';
 import '../../widgets/product_image.dart';
 import '../../widgets/rating_stars.dart';
 import 'cart_screen.dart';
+import '../../widgets/quantity_input.dart';
 import 'chat_screen.dart';
 import 'checkout_screen.dart';
 import 'notifications_screen.dart';
@@ -35,6 +40,15 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   int quantity = 1;
   int cartCount = 0;
   int unreadNotifications = 0;
+
+  // Re-checked on open: the product may come from a list that did not
+  // attach its flash sale, or the sale may have started since.
+  FlashSaleModel? _flashSale;
+  bool _flashSaleChecked = false;
+
+  ProductModel get _product => _flashSaleChecked
+      ? widget.product.withFlashSale(_flashSale)
+      : widget.product;
 
   UserModel? _shop;
   double _shopRating = 0;
@@ -88,7 +102,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('This listing was already reported or could not be reported.'),
+          content: Text(
+            'This listing was already reported or could not be reported.',
+          ),
         ),
       );
     } finally {
@@ -104,6 +120,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     _loadUnreadNotifications();
     _loadShopInfo();
     _loadFavoriteStatus();
+    _loadFlashSale();
   }
 
   // =========================================================
@@ -339,6 +356,21 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     );
   }
 
+  Future<void> _loadFlashSale() async {
+    final productId = widget.product.id;
+    if (productId == null) return;
+    try {
+      final live = await FlashSaleRepository().liveByProductIds([productId]);
+      if (!mounted) return;
+      setState(() {
+        _flashSale = live[productId];
+        _flashSaleChecked = true;
+      });
+    } catch (_) {
+      // Keep whatever the listing attached.
+    }
+  }
+
   Future<void> _addSelectedProductToCart(double unitPrice) async {
     final product = widget.product;
     final userId = SessionService.userId;
@@ -399,11 +431,15 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final product = widget.product;
-    final unitPrice = _selectedOption?.price ?? product.price;
+    final product = _product;
+    final baseUnitPrice = _selectedOption?.price ?? product.price;
+    final unitPrice = product.discountedPriceFor(baseUnitPrice);
     final availableStock = _selectedOption?.stock ?? product.stock;
     final displayImage = _selectedOption?.image ?? product.image;
-    final bool isAvailable = availableStock > 0;
+    final isOwnProduct =
+        SessionService.userId != null &&
+        SessionService.userId == product.sellerId;
+    final bool isAvailable = availableStock > 0 && !isOwnProduct;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -412,10 +448,13 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
         quantity: quantity,
         total: unitPrice * quantity,
         isAvailable: isAvailable,
+        isOwnProduct: isOwnProduct,
+        maxQuantity: availableStock > 99 ? 99 : availableStock,
         canDecrease: quantity > 1,
         canIncrease: isAvailable && quantity < availableStock,
         onDecrease: () => setState(() => quantity--),
         onIncrease: () => setState(() => quantity++),
+        onQuantityChanged: (value) => setState(() => quantity = value),
         onMessage: () => _messageSeller(context, product),
         onAddToCart: () => _addSelectedProductToCart(unitPrice),
         onBuyNow: () => _buySelectedProduct(unitPrice),
@@ -461,13 +500,16 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
                   // Dark gradient so the floating icons stay readable
                   // over light product photos.
-                  Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0x66000000), Colors.transparent],
-                        stops: [0.0, 0.3],
+                  // IgnorePointer so it doesn't swallow taps meant for the image.
+                  IgnorePointer(
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0x66000000), Colors.transparent],
+                          stops: [0.0, 0.3],
+                        ),
                       ),
                     ),
                   ),
@@ -548,6 +590,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                   ),
 
                   const SizedBox(height: 10),
+
+                  if (product.liveFlashSale != null) ...[
+                    _FlashSaleBanner(
+                      sale: product.liveFlashSale!,
+                      regularPrice: product.regularPriceFor(baseUnitPrice),
+                      onEnded: () {
+                        if (mounted) setState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                  ],
 
                   // ==================================
                   // PRICE
@@ -717,7 +770,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                         onPressed: _isReporting ? null : _reportNotHandmade,
                         icon: const Icon(Icons.flag_outlined, size: 18),
                         label: Text(
-                          _isReporting ? 'Sending report…' : 'Report: Not handmade',
+                          _isReporting
+                              ? 'Sending report…'
+                              : 'Report: Not handmade',
                         ),
                       ),
                     ),
@@ -932,10 +987,13 @@ class _PurchasePanel extends StatelessWidget {
   final int quantity;
   final double total;
   final bool isAvailable;
+  final bool isOwnProduct;
+  final int maxQuantity;
   final bool canDecrease;
   final bool canIncrease;
   final VoidCallback onDecrease;
   final VoidCallback onIncrease;
+  final ValueChanged<int> onQuantityChanged;
   final VoidCallback onMessage;
   final VoidCallback onAddToCart;
   final VoidCallback onBuyNow;
@@ -944,10 +1002,13 @@ class _PurchasePanel extends StatelessWidget {
     required this.quantity,
     required this.total,
     required this.isAvailable,
+    required this.isOwnProduct,
+    required this.maxQuantity,
     required this.canDecrease,
     required this.canIncrease,
     required this.onDecrease,
     required this.onIncrease,
+    required this.onQuantityChanged,
     required this.onMessage,
     required this.onAddToCart,
     required this.onBuyNow,
@@ -980,16 +1041,10 @@ class _PurchasePanel extends StatelessWidget {
                     icon: const Icon(Icons.remove_circle_outline),
                     tooltip: 'Decrease quantity',
                   ),
-                  SizedBox(
-                    width: 34,
-                    child: Text(
-                      '$quantity',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                  QuantityInput(
+                    value: quantity,
+                    max: maxQuantity,
+                    onChanged: onQuantityChanged,
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
@@ -999,6 +1054,17 @@ class _PurchasePanel extends StatelessWidget {
                   ),
                 ],
               ),
+              if (isOwnProduct)
+                const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Text(
+                    'This is your own product, so you can’t order it.',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1227,6 +1293,7 @@ class _FullScreenImageViewer extends StatelessWidget {
                     child: ProductImage(
                       path: imagePath,
                       fit: BoxFit.contain,
+                      maxDecodeWidth: 2400, // stays sharp when zoomed in
                       placeholder: const Icon(
                         Icons.image_outlined,
                         size: 90,
@@ -1262,6 +1329,110 @@ class _FullScreenImageViewer extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FlashSaleBanner extends StatefulWidget {
+  final FlashSaleModel sale;
+  final double regularPrice;
+  final VoidCallback onEnded;
+
+  const _FlashSaleBanner({
+    required this.sale,
+    required this.regularPrice,
+    required this.onEnded,
+  });
+
+  @override
+  State<_FlashSaleBanner> createState() => _FlashSaleBannerState();
+}
+
+class _FlashSaleBannerState extends State<_FlashSaleBanner> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (!DateTime.now().isBefore(widget.sale.endsAt)) {
+        _timer?.cancel();
+        widget.onEnded();
+        return;
+      }
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _countdown() {
+    var left = widget.sale.endsAt.difference(DateTime.now());
+    if (left.isNegative) left = Duration.zero;
+    String two(int value) => value.toString().padLeft(2, '0');
+    final hours = left.inHours;
+    return '${two(hours)}:${two(left.inMinutes % 60)}:${two(left.inSeconds % 60)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sale = widget.sale;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primary, AppColors.secondary],
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: DefaultTextStyle(
+        style: const TextStyle(color: Colors.white, fontSize: 12.5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 4),
+                const Text(
+                  'Flash Sale',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+                const Spacer(),
+                Text(
+                  'Ends in ${_countdown()}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: '-${sale.discountPercent}% · regular '),
+                  TextSpan(
+                    text: '₱${widget.regularPrice.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      decoration: TextDecoration.lineThrough,
+                      decorationColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${sale.remaining} left at this price · '
+              'limit ${sale.perCustomerLimit} per customer',
+            ),
+          ],
+        ),
       ),
     );
   }

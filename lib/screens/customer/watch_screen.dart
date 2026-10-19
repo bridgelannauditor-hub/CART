@@ -6,10 +6,13 @@ import '../../repositories/shop_repository.dart';
 import '../../widgets/bottom_navbar.dart';
 import '../../widgets/product_image.dart';
 import 'live_viewer_screen.dart';
+import 'product_videos_view.dart';
 import 'shop_screen.dart';
 
-/// "Watch" tab: every seller who is live right now. Tapping one opens
-/// [LiveViewerScreen]; "Visit shop" opens the seller's [ShopScreen].
+/// "Watch" tab with two sections: **Live** (every seller live right now;
+/// tapping one opens [LiveViewerScreen], "Visit shop" opens [ShopScreen]) and
+/// **Videos** (product videos uploaded by shops). The search icon filters the
+/// current section.
 class WatchScreen extends StatefulWidget {
   const WatchScreen({super.key});
 
@@ -21,6 +24,98 @@ class _WatchScreenState extends State<WatchScreen> {
   final ShopRepository _shopRepository = ShopRepository();
 
   late Future<List<UserModel>> _liveShopsFuture;
+
+  bool _showVideos = false;
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _setSearching(bool value) {
+    setState(() {
+      _searching = value;
+      if (!value) {
+        _searchController.clear();
+        _query = '';
+      }
+    });
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    if (_searching) {
+      return AppBar(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          tooltip: 'Close search',
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => _setSearching(false),
+        ),
+        title: TextField(
+          controller: _searchController,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          cursorColor: Colors.white,
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+          decoration: InputDecoration(
+            hintText: _showVideos ? 'Search videos' : 'Search live shops',
+            hintStyle: const TextStyle(color: Colors.white70),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+          ),
+          onChanged: (value) => setState(() => _query = value),
+        ),
+        actions: [
+          if (_query.isNotEmpty)
+            IconButton(
+              tooltip: 'Clear',
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () => setState(() {
+                _searchController.clear();
+                _query = '';
+              }),
+            ),
+        ],
+      );
+    }
+
+    return AppBar(
+      backgroundColor: AppColors.primary,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      titleSpacing: 16,
+      title: Row(
+        children: [
+          _SectionButton(
+            label: 'Live',
+            selected: !_showVideos,
+            onTap: () => setState(() => _showVideos = false),
+          ),
+          const SizedBox(width: 20),
+          _SectionButton(
+            label: 'Videos',
+            selected: _showVideos,
+            onTap: () => setState(() => _showVideos = true),
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(
+          tooltip: 'Search',
+          icon: const Icon(Icons.search_rounded),
+          onPressed: () => _setSearching(true),
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
 
   @override
   void initState() {
@@ -54,101 +149,108 @@ class _WatchScreenState extends State<WatchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: const Text(
-          "Watch",
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-      ),
+      appBar: _buildAppBar(),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: FutureBuilder<List<UserModel>>(
-            future: _liveShopsFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
-              }
+        child: _showVideos
+            ? ProductVideosView(query: _query)
+            : RefreshIndicator(
+                onRefresh: _refresh,
+                child: FutureBuilder<List<UserModel>>(
+                  future: _liveShopsFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-              if (snapshot.hasError) {
-                // ListView so pull-to-refresh still works after an error.
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    SizedBox(height: MediaQuery.of(context).size.height * .25),
-                    const Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: AppColors.lightGrey,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Couldn't load live shops",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Check your connection and pull down to try again",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  ],
-                );
-              }
+                    if (snapshot.hasError) {
+                      // ListView so pull-to-refresh still works after an error.
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.of(context).size.height * .25,
+                          ),
+                          const Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: AppColors.lightGrey,
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            "Couldn't load live shops",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            "Check your connection and pull down to try again",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                        ],
+                      );
+                    }
 
-              final shops = snapshot.data ?? [];
+                    final query = _query.trim().toLowerCase();
+                    final shops = [
+                      for (final shop in snapshot.data ?? const <UserModel>[])
+                        if (query.isEmpty ||
+                            _shopName(shop).toLowerCase().contains(query))
+                          shop,
+                    ];
 
-              if (shops.isEmpty) {
-                // ListView so pull-to-refresh still works when empty.
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    SizedBox(height: MediaQuery.of(context).size.height * .25),
-                    const Icon(
-                      Icons.live_tv_outlined,
-                      size: 64,
-                      color: AppColors.lightGrey,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "No one is live right now",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Pull down to refresh",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  ],
-                );
-              }
+                    if (shops.isEmpty) {
+                      // ListView so pull-to-refresh still works when empty.
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.of(context).size.height * .25,
+                          ),
+                          const Icon(
+                            Icons.live_tv_outlined,
+                            size: 64,
+                            color: AppColors.lightGrey,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _query.trim().isEmpty
+                                ? "No one is live right now"
+                                : "No live shops match your search",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            "Pull down to refresh",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                        ],
+                      );
+                    }
 
-              return ListView.separated(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                itemCount: shops.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, index) => _buildLiveCard(shops[index]),
-              );
-            },
-          ),
-        ),
+                    return ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
+                      itemCount: shops.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) =>
+                          _buildLiveCard(shops[index]),
+                    );
+                  },
+                ),
+              ),
       ),
-      bottomNavigationBar: const BottomNavbar(currentIndex: 1),
+      bottomNavigationBar: const BottomNavbar(currentIndex: 2),
     );
   }
 
@@ -294,6 +396,60 @@ class _WatchScreenState extends State<WatchScreen> {
           color: AppColors.primary,
           fontWeight: FontWeight.bold,
           fontSize: 22,
+        ),
+      ),
+    );
+  }
+}
+
+/// Text-only section switch used in the app bar: the selected one is bold
+/// white with an underline, the other is dimmed.
+class _SectionButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SectionButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white : Colors.white70,
+                  fontSize: 20,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 3),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: 3,
+                width: selected ? 24 : 0,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -8,6 +8,7 @@ import '../../repositories/product_repository.dart';
 import '../../services/order_functions_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/date_formatter.dart';
+import '../../utils/orders_live_refresh.dart';
 import '../../widgets/bottom_navbar.dart';
 import '../../widgets/product_image.dart';
 import '../../widgets/rate_product_dialog.dart';
@@ -42,10 +43,52 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _isLoadingMore = false;
   String _filter = "All";
 
+  late final OrdersLiveRefresh _live = OrdersLiveRefresh(
+    name: 'customer-orders',
+    onChange: _refreshQuietly,
+  );
+
   @override
   void initState() {
     super.initState();
     _loadOrders();
+    _live.start();
+  }
+
+  @override
+  void dispose() {
+    _live.dispose();
+    super.dispose();
+  }
+
+  /// Re-reads the newest orders when one changes (for example a seller marks
+  /// it Delivered) without a loading spinner, keeping any older pages loaded.
+  Future<void> _refreshQuietly() async {
+    final userId = SessionService.userId;
+    if (!mounted || userId == null) return;
+    try {
+      final current = await _ordersFuture;
+      final page = await _orderRepository.getCustomerOrderPage(userId);
+      if (!mounted) return;
+      final freshIds = {for (final item in page.items) item.itemId};
+      final oldest = page.items.isEmpty ? null : page.items.last.orderDate;
+      final older = [
+        for (final item in current)
+          if (!freshIds.contains(item.itemId) &&
+              oldest != null &&
+              item.orderDate.compareTo(oldest) < 0)
+            item,
+      ];
+      setState(() {
+        _ordersFuture = Future.value([...page.items, ...older]);
+        if (older.isEmpty) {
+          _orderCursor = page.cursor;
+          _hasMoreOrders = page.hasMore;
+        }
+      });
+    } catch (_) {
+      // A failed background refresh keeps what is already on screen.
+    }
   }
 
   void _loadOrders() {
@@ -300,12 +343,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             ),
                           ),
                         )
+                      else if (snapshot.hasError)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 80),
+                          child: Column(
+                            children: [
+                              const Text('Your orders could not be loaded.'),
+                              TextButton(
+                                onPressed: _refresh,
+                                child: const Text('Try again'),
+                              ),
+                            ],
+                          ),
+                        )
                       else ...[
                         if (filtered.isEmpty)
                           _EmptyOrdersState(hasAnyOrders: allOrders.isNotEmpty)
                         else
                           ...filtered.map(
-                            (item) => _OrderTile(
+                            (item) => OrderTile(
                               key: ValueKey(item.itemId),
                               item: item,
                               onMessageSeller: () => _messageSeller(item),
@@ -416,7 +472,8 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _OrderTile extends StatelessWidget {
+/// One product line of a customer's order, with the actions for its status.
+class OrderTile extends StatelessWidget {
   final CustomerOrderItemModel item;
   final VoidCallback onMessageSeller;
   final VoidCallback onRateProduct;
@@ -424,7 +481,7 @@ class _OrderTile extends StatelessWidget {
   final VoidCallback onTrackOrder;
   final VoidCallback onCancelOrder;
 
-  const _OrderTile({
+  const OrderTile({
     super.key,
     required this.item,
     required this.onMessageSeller,
@@ -615,60 +672,68 @@ class _OrderTile extends StatelessWidget {
                     ),
                   )
                 else if (item.status == "Delivered")
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(
-                        width: 94,
-                        height: 32,
-                        child: OutlinedButton.icon(
-                          onPressed: onRateProduct,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.secondary,
-                            side: const BorderSide(color: AppColors.secondary),
-                            padding: EdgeInsets.zero,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(9),
+                  // A stretched Column needs a bounded width. Inside this Row
+                  // it had none, so Flutter could not lay the tile out and
+                  // every Delivered order silently disappeared from the list.
+                  SizedBox(
+                    width: 94,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: 94,
+                          height: 32,
+                          child: OutlinedButton.icon(
+                            onPressed: onRateProduct,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.secondary,
+                              side: const BorderSide(
+                                color: AppColors.secondary,
+                              ),
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(9),
+                              ),
                             ),
-                          ),
-                          icon: const Icon(
-                            Icons.star_outline_rounded,
-                            size: 14,
-                          ),
-                          label: const Text(
-                            'Rate Product',
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w600,
+                            icon: const Icon(
+                              Icons.star_outline_rounded,
+                              size: 14,
                             ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      SizedBox(
-                        width: 94,
-                        height: 32,
-                        child: ElevatedButton(
-                          onPressed: onBuyAgain,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.zero,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(9),
-                            ),
-                          ),
-                          child: const Text(
-                            'Buy Again',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.bold,
+                            label: const Text(
+                              'Rate Product',
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 5),
+                        SizedBox(
+                          width: 94,
+                          height: 32,
+                          child: ElevatedButton(
+                            onPressed: onBuyAgain,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.zero,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                            ),
+                            child: const Text(
+                              'Buy Again',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
               ],
             ),

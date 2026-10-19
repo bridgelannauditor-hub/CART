@@ -121,6 +121,16 @@ class OrderRepository {
     );
   }
 
+  /// Orders (not items) with products still Pending for this seller.
+  Future<int> getSellerPendingOrderCount(int sellerId) async {
+    final rows = await _supabase
+        .from('order_items')
+        .select('order_id')
+        .eq('seller_id', sellerId)
+        .eq('status', 'Pending');
+    return {for (final row in rows) (row['order_id'] as num).toInt()}.length;
+  }
+
   Future<OrderPage<SellerOrderItemModel>> getSellerOrderPage(
     int sellerId, {
     String? after,

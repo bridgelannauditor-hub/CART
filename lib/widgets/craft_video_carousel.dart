@@ -6,7 +6,7 @@ import '../constants/app_colors.dart';
 import '../data/craft_categories.dart';
 import 'category_video_card.dart';
 
-/// Auto-advancing, single-video-at-a-time carousel of the craft
+/// Auto-advancing, single-card-at-a-time carousel of the craft
 /// category groups. Slides right-to-left on a timer, and can also be
 /// swiped manually. Loops indefinitely via a large virtual page count.
 class CraftVideoCarousel extends StatefulWidget {
@@ -63,8 +63,8 @@ class _CraftVideoCarouselState extends State<CraftVideoCarousel> {
               final group = craftCategoryGroups[index % groupCount];
               return CategoryVideoCard(
                 title: group.title,
-                videoUrl: group.previewVideoUrl,
-                fallbackIcon: group.items.first.icon,
+                leadIcon: group.items.first.icon,
+                icons: [for (final item in group.items) item.icon],
                 onTap: () => widget.onTapGroup(group),
               );
             },

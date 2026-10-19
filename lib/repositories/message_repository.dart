@@ -116,8 +116,18 @@ class MessageRepository {
           .from('messages')
           .stream(primaryKey: ['id'])
           .eq('conversation_id', conversationId)
-          .order('message_date')
-          .map((rows) => rows.map(MessageModel.fromMap).toList()),
+          // The stream's order() sorts newest-first unless ascending is set,
+          // which put the newest message at the top of the chat.
+          .order('message_date', ascending: true)
+          .map((rows) {
+            final messages = rows.map(MessageModel.fromMap).toList();
+            // Oldest first, whatever order the realtime layer delivers.
+            messages.sort(
+              (a, b) => (DateTime.tryParse(a.messageDate) ?? DateTime(0))
+                  .compareTo(DateTime.tryParse(b.messageDate) ?? DateTime(0)),
+            );
+            return messages;
+          }),
     );
   }
 
@@ -256,6 +266,9 @@ class MessageRepository {
     for (final row in pageRows) {
       final otherId = _otherParticipant(row, userId);
       if (otherId == null) continue;
+      // Opening a chat creates its conversation row; until a message is sent
+      // there is nothing to show, so it stays out of the list.
+      if (row['last_message_date'] == null) continue;
       final otherUser = usersById[otherId];
       final fullName = otherUser == null
           ? ''

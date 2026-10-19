@@ -1,3 +1,4 @@
+import 'follow_list_screen.dart';
 import 'my_vouchers_screen.dart';
 import '../../repositories/voucher_repository.dart';
 import '../../repositories/shop_repository.dart';
@@ -17,7 +18,9 @@ import 'notifications_screen.dart';
 import 'password_security_screen.dart';
 import 'personal_information_screen.dart';
 import 'settings_screen.dart';
-import 'seller_application_screen.dart';
+import 'seller_onboarding_screen.dart';
+import '../../repositories/admin_repository.dart';
+import '../admin/admin_dashboard_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -30,10 +33,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isResetting = false;
   int _voucherCount = 0;
   int _followedCount = 0;
+  bool _isAdmin = false;
   @override
   void initState() {
     super.initState();
     _loadCounts();
+    _loadAdminAccess();
+  }
+
+  // Only decides whether to show the admin tile; the server re-checks access.
+  Future<void> _loadAdminAccess() async {
+    final isAdmin = await AdminRepository().isAdmin();
+    if (mounted && isAdmin != _isAdmin) setState(() => _isAdmin = isAdmin);
   }
 
   Future<void> _loadCounts() async {
@@ -67,6 +78,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context,
       MaterialPageRoute(builder: (_) => screen),
     ).then((_) => _loadCounts());
+  }
+
+  void _switchToSellerMode(BuildContext context) {
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.sellerDashboard,
+      (route) => false,
+    );
   }
 
   Future<void> _confirmResetLocalData(BuildContext context) async {
@@ -261,6 +280,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 16),
 
                   // ==========================
+                  // MANAGE STORE (sellers only)
+                  // ==========================
+                  if (SessionService.isSeller) ...[
+                    _ManageStoreCard(onTap: () => _switchToSellerMode(context)),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // ==========================
                   // STATS ROW
                   // ==========================
                   Container(
@@ -282,9 +309,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _StatItem(
                           value: '$_followedCount',
                           label: "Followed Stores",
+                          onTap: () => _openScreen(
+                            context,
+                            FollowListScreen(
+                              mode: FollowListMode.following,
+                              userId: SessionService.userId ?? 0,
+                            ),
+                          ),
                         ),
                         const _StatDivider(),
-                        _StatItem(value: '$_voucherCount', label: "Vouchers"),
+                        _StatItem(
+                          value: '$_voucherCount',
+                          label: "Vouchers",
+                          onTap: () =>
+                              _openScreen(context, const MyVouchersScreen()),
+                        ),
                       ],
                     ),
                   ),
@@ -335,14 +374,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const PasswordSecurityScreen(),
                         ),
                       ),
-                      _ProfileTile(
-                        icon: Icons.storefront_outlined,
-                        label: "Apply to Sell",
-                        onTap: () => _openScreen(
-                          context,
-                          const SellerApplicationScreen(),
+                      if (!SessionService.isSeller)
+                        _ProfileTile(
+                          icon: Icons.storefront_outlined,
+                          label: "Become a Seller",
+                          onTap: () => _openScreen(
+                            context,
+                            const SellerOnboardingScreen(),
+                          ),
                         ),
-                      ),
+                      if (_isAdmin)
+                        _ProfileTile(
+                          icon: Icons.admin_panel_settings_outlined,
+                          label: "Admin Dashboard",
+                          onTap: () => _openScreen(
+                            context,
+                            const AdminDashboardScreen(),
+                          ),
+                        ),
                     ],
                   ),
 
@@ -411,6 +460,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
+/// Prominent shortcut to the seller dashboard, shown between the account
+/// header and the stats so sellers don't have to scroll to find it.
+class _ManageStoreCard extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _ManageStoreCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.primary,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.storefront_outlined,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Manage store",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      "Products, orders and live selling",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionHeader extends StatelessWidget {
   final String label;
 
@@ -436,27 +548,38 @@ class _SectionHeader extends StatelessWidget {
 class _StatItem extends StatelessWidget {
   final String value;
   final String label;
+  final VoidCallback? onTap;
 
-  const _StatItem({required this.value, required this.label});
+  const _StatItem({required this.value, required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 19,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-        ),
-      ],
+      ),
     );
   }
 }

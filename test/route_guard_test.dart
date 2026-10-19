@@ -9,14 +9,25 @@ void main() {
     );
   });
 
-  test('both registration stages remain public for anonymous users', () {
+  test('the single registration route remains public for anonymous users', () {
     expect(
       AppRoutes.resolveForSession(AppRoutes.register, loggedIn: false),
       AppRoutes.register,
     );
+  });
+
+  test('password recovery callback bypasses normal session redirects', () {
     expect(
-      AppRoutes.resolveForSession(AppRoutes.registerDetails, loggedIn: false),
-      AppRoutes.registerDetails,
+      AppRoutes.resolveForSession(
+        AppRoutes.resetPassword,
+        loggedIn: true,
+        accountType: 'Customer',
+      ),
+      AppRoutes.resetPassword,
+    );
+    expect(
+      AppRoutes.resolveForSession(AppRoutes.resetPassword, loggedIn: false),
+      AppRoutes.resetPassword,
     );
   });
 
@@ -31,14 +42,14 @@ void main() {
     );
   });
 
-  test('sellers cannot open customer routes', () {
+  test('sellers can open customer routes to shop as Buyers', () {
     expect(
       AppRoutes.resolveForSession(
         AppRoutes.checkout,
         loggedIn: true,
         accountType: 'Seller',
       ),
-      AppRoutes.sellerDashboard,
+      AppRoutes.checkout,
     );
   });
 
@@ -76,6 +87,21 @@ void main() {
     expect(
       AppRoutes.resolveForSession(AppRoutes.sellerApplication, loggedIn: false),
       AppRoutes.login,
+    );
+  });
+
+  test('admin dashboard requires an authenticated session', () {
+    expect(
+      AppRoutes.resolveForSession(AppRoutes.adminDashboard, loggedIn: false),
+      AppRoutes.login,
+    );
+    expect(
+      AppRoutes.resolveForSession(
+        AppRoutes.adminDashboard,
+        loggedIn: true,
+        accountType: 'Customer',
+      ),
+      AppRoutes.adminDashboard,
     );
   });
 }

@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/routes.dart';
+import '../../services/push_service.dart';
+import '../../widgets/account_warning_dialog.dart';
+import '../auth/account_suspended_screen.dart';
+import '../../repositories/admin_repository.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -38,26 +42,63 @@ class _SplashScreenState extends State<SplashScreen>
     final minimumDisplay = Future<void>.delayed(
       const Duration(milliseconds: 500),
     );
-    final profile = await AuthService().restoreSession().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => null,
-    );
-    await minimumDisplay;
-    if (!mounted) return;
-
-    if (profile?.id != null) {
-      SessionService.loginUser(profile!);
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        profile.accountType == 'Seller'
-            ? AppRoutes.sellerDashboard
-            : AppRoutes.home,
-        (_) => false,
+    try {
+      final profile = await AuthService().restoreSession().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => null,
       );
-      return;
-    }
+      await minimumDisplay;
+      if (!mounted) return;
 
-    Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (_) => false);
+      if (profile?.id != null) {
+        final suspension = await AuthService().suspensionReason();
+        if (!mounted) return;
+        if (suspension != null) {
+          await AuthService().logout();
+          if (!mounted) return;
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AccountSuspendedScreen(reason: suspension),
+            ),
+            (_) => false,
+          );
+          return;
+        }
+        await showPendingAccountWarnings(context);
+        if (!mounted) return;
+        SessionService.loginUser(profile!);
+        final isAdmin = await AdminRepository().isAdmin();
+        if (!mounted) return;
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          isAdmin
+              ? AppRoutes.adminDashboard
+              : profile.accountType == 'Seller'
+              ? AppRoutes.sellerDashboard
+              : AppRoutes.home,
+          (_) => false,
+        );
+        return;
+      }
+
+      Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (_) => false);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          context: ErrorDescription('while restoring the startup session'),
+        ),
+      );
+      await minimumDisplay;
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (_) => false);
+    } finally {
+      // Let a tapped push notification open its screen now that start-up
+      // navigation is finished.
+      PushService.instance.markAppReady();
+    }
   }
 
   @override

@@ -9,6 +9,7 @@ import '../../repositories/product_repository.dart';
 import '../../services/session_service.dart';
 import '../../widgets/bottom_navbar.dart';
 import '../../widgets/product_image.dart';
+import '../../widgets/quantity_input.dart';
 import 'checkout_screen.dart';
 
 class CartScreen extends StatefulWidget {
@@ -125,9 +126,8 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   double itemPrice(CartItemModel item, ProductModel product) {
-    return product.optionById(item.optionId)?.price ??
-        item.unitPrice ??
-        product.price;
+    final basePrice = product.optionById(item.optionId)?.price ?? product.price;
+    return product.discountedPriceFor(basePrice);
   }
 
   int itemStock(CartItemModel item, ProductModel product) {
@@ -411,12 +411,14 @@ class _CartScreenState extends State<CartScreen> {
                         padding: EdgeInsets.zero,
                       ),
 
-                      Text(
-                        "${item.quantity}",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
+                      QuantityInput(
+                        value: item.quantity,
+                        max: itemStock(item, product) > 99
+                            ? 99
+                            : itemStock(item, product),
+                        width: 46,
+                        fontSize: 15,
+                        onChanged: (value) => updateQuantity(item, value),
                       ),
 
                       IconButton(

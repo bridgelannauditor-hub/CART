@@ -99,11 +99,16 @@ class _ChatScreenState extends State<ChatScreen> {
         .listen(
           (messages) {
             if (!mounted) return;
+            // Only follow new messages when the reader is already at the
+            // bottom; someone scrolled up reading history is left in place.
+            final atBottom =
+                !_scrollController.hasClients ||
+                _scrollController.position.pixels < 120;
             setState(() {
               _messages = messages;
               _isLoading = false;
             });
-            _scrollToBottom();
+            if (atBottom) _scrollToBottom();
 
             final hasUnread = messages.any(
               (message) => message.receiverId == userId && message.isRead == 0,
@@ -129,10 +134,14 @@ class _ChatScreenState extends State<ChatScreen> {
         );
   }
 
+  /// The list is reversed (newest message at offset 0, anchored at the
+  /// bottom), so "the bottom" is always offset 0 however tall the messages are.
+  /// Scrolling to maxScrollExtent on a normal list under-shoots with varied
+  /// message heights, leaving the newest message off screen.
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      _scrollController.jumpTo(0);
     });
   }
 
@@ -549,10 +558,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? _EmptyChatState(name: widget.otherUserName)
                   : ListView.builder(
                       controller: _scrollController,
+                      reverse: true,
                       padding: const EdgeInsets.all(16),
                       itemCount: _messages.length,
                       itemBuilder: (context, index) {
-                        final message = _messages[index];
+                        final message = _messages[_messages.length - 1 - index];
                         final isMine = message.senderId == userId;
                         return _MessageBubble(
                           message: message,
